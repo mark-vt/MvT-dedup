@@ -1,0 +1,30 @@
+# =============================================================================
+# Copyright (c) 2026 Markus Herbert Lehmann, Nuremberg, Germany. All rights reserved.
+#
+# Licensed under the Non-Commercial Software License – Version 1.4
+# See LICENSE.md in the repository for full license details:
+# https://github.com/mark-vt/MvT-dedub/LICENSE.md
+#
+# Permission:
+#   - Use for private, non-commercial purposes.
+#   - Use for internal corporate or organizational purposes is allowed,
+#     provided there is no direct or indirect sale.
+#   - Changes may be made in a branch within this repository only.
+#
+# Forbidden:
+#   - Any commercial sale or distribution, including as part of software packages
+#   - Military, intelligence, or law-enforcement use
+#   - AI weapons systems
+#   - Surveillance systems or invasive monitoring
+#   - HR screening tools or other software for evaluation, control, or monitoring of people
+#   - Forking the repository
+#   - Any other ethically questionable use or violation of third-party rights
+#
+# Disclaimer:
+#   - Software is provided "AS IS" without warranty of any kind, express or implied.
+#   - The author is not liable for any damages or losses arising from use.
+#
+# Notes:
+#   - Private use and redistribution within private circles is allowed.
+#   - Public distribution or merging to main requires prior written consent from the author.
+# =============================================================================
