@@ -1,4 +1,4 @@
-#!/home/markus/venvs/blake3/bin/python
+#!packages/bin/python
 
 #    !/usr/bin/env python3
 # ------------------------------------------------------------------------------
@@ -11,6 +11,7 @@ import time
 import atexit
 import datetime
 from   blake3 import blake3
+from   send2trash import send2trash
 
 # Includes for GUI stuff
 import tkinter as tk
@@ -63,13 +64,19 @@ colorButt  = ('#D9E9D9', '#E9D9D9', '#D9E9E9', '#E9D9B9', "#E1E190")
 # File system operations -------------------------
 
 def delete_file( pathfile ):
-    os.remove(pathfile)
+    if initData['DeleteToTrash']:
+        send2trash(pathfile)
+    else:
+        os.remove(pathfile)
     print(f"File {pathfile} deleted!")
 
 def delete_empty_folder(folder):
     global initData
     if initData['DelEmptyFolder']:
-        os.rmdir(folder)
+        if initData['DeleteToTrash']:
+            send2trash(folder)
+        else:
+            os.rmdir(folder)
         print(f"Empty folder {folder} deleted!")
 
 def is_dir_empty(path: str) -> bool:
@@ -106,7 +113,7 @@ def tk_variables_get_to_save():
 
 # General ----------------------------------------
 
-def humread( v ):
+def humreadX( v ):
     i = 0
     x = 1 if v == 0 else v
     p = ('B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB')
@@ -116,6 +123,23 @@ def humread( v ):
     i-=1
     v >>= (10 * i)
     return f'{v} {p[i]}'
+
+def humread(n: int) -> str:
+    import math
+
+    units = ["B", "KB", "MB", "GB", "TB", "PB", 'EB', 'ZB', 'YB' ]
+    base = 1024
+
+    if n <= 999:
+        return f"{n} B"
+
+    unit = int(math.log(n, base))
+    value = n / (base ** unit)
+
+    # 3 signifikante Stellen, gerundet
+    text = f"{value:.3g}"
+    return f"{text} {units[unit]}"
+
 
 # Class for scrollable frames --------------------
 
@@ -196,6 +220,7 @@ def init_data_load():
                         'winSizeX':840, 'winSizeY':600,
                         'winPosX' :100, 'winPosY' :100,
                         'DelEmptyFolder' : True ,
+                        'DeleteToTrash'  : False ,
                         'SaveMarkTexts'  : True ,
                         'SaveFileDB'     : False,
                         'SearchFoldLast' : searchFolderLast,
@@ -983,23 +1008,27 @@ def wmake_mark( tab ):
 def wmake_settings( tab ):
     global initData
 
-    chkbDELF    = tk_variables_register_and_init('DelEmptyFolder', 'bool')
-    chkbSTMT    = tk_variables_register_and_init('SaveMarkTexts' , 'bool')
-    chkbSFDB    = tk_variables_register_and_init('SaveFileDB'    , 'bool')
-    chkbFASE    = tk_variables_register_and_init('UseFastHash'   , 'bool')
-    blockSize   = tk_variables_register_and_init('HashBlkSize'   , 'string')
-    blockSizeHR = tk_variables_register_and_init('HashBlkSizeHR' , 'string')
-    blockNum    = tk_variables_register_and_init('HashBlkNum'    , 'string')
-    blockTotal  = tk_variables_register_and_init('HashBlkTotal'  , 'string')
+    chkbDelEmpFold  = tk_variables_register_and_init('DelEmptyFolder', 'bool')
+    chkbDel2Trash   = tk_variables_register_and_init('DeleteToTrash' , 'bool')
+    chkbSaveMarkTxt = tk_variables_register_and_init('SaveMarkTexts' , 'bool')
+    chkbSaveFileDB  = tk_variables_register_and_init('SaveFileDB'    , 'bool')
+    chkbUseFastHash = tk_variables_register_and_init('UseFastHash'   , 'bool')
+    blockSize     = tk_variables_register_and_init('HashBlkSize'   , 'string')
+    blockSizeHR   = tk_variables_register_and_init('HashBlkSizeHR' , 'string')
+    blockNum      = tk_variables_register_and_init('HashBlkNum'    , 'string')
+    blockTotal    = tk_variables_register_and_init('HashBlkTotal'  , 'string')
 
     tk.Checkbutton(tab, text="Delete folder if they become empty by file removement",
-        variable=chkbDELF ).pack(anchor="w", side='top', pady=(10,5) )
+        variable=chkbDelEmpFold ).pack(anchor="w", side='top', pady=(10,5) )
+
+    tk.Checkbutton(tab, text="Delete to TRASH instead of real deletion",
+        variable=chkbDel2Trash ).pack(anchor="w", side='top', pady=(10,5) )
 
     tk.Checkbutton(tab, text="Save settings from the MARK tab at program's end",
-        variable=chkbSTMT ).pack(anchor="w", side='top', pady=5)
+        variable=chkbSaveMarkTxt ).pack(anchor="w", side='top', pady=5)
 
     tk.Checkbutton(tab, text="Store file database at program's end to continue on next start without new 'search'",
-        variable=chkbSFDB ).pack(anchor="w", side='top', pady=5)
+        variable=chkbSaveFileDB ).pack(anchor="w", side='top', pady=5)
 
     # Create a frame for the fast hash options
     def blockUpdate():
@@ -1012,7 +1041,7 @@ def wmake_settings( tab ):
     fastHashFrame.pack(anchor="w", side='top', fill="x")
 
     tk.Checkbutton(fastHashFrame, text="Use fast file hashing for big files",
-        variable=chkbDELF ).pack(anchor="w", side='left', pady=(10,5) )
+        variable=chkbDelEmpFold ).pack(anchor="w", side='left', pady=(10,5) )
 
     label = tk.Label(fastHashFrame, text="Block: 2^")
     label.pack(anchor="w", side='left', padx=(25,0), pady=(10,5), fill="x")
