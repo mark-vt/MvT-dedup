@@ -1,6 +1,5 @@
+#!/usr/bin/env python3
 #!packages/bin/python
-
-#    !/usr/bin/env python3
 # ------------------------------------------------------------------------------
 
 # Includes for normal file operations etc.
@@ -8,6 +7,7 @@ import os
 import sys
 import json
 import time
+import shlex
 import atexit
 import datetime
 from   blake3 import blake3
@@ -22,7 +22,7 @@ from   tkinter import filedialog
 # ------------------------------------------------------------------------------
 # Global Variables -------------------------------------------------------------
 
-version = '1.0'
+version = '1.02'
 
 searchFileCnt = 0;
 
@@ -45,10 +45,6 @@ searchStopFlag = False
 
 # holds name of last selected file in find tab
 lastSelectedFile = ""
-# will be filled with filename of ini data
-fileNameInit   = ""
-# will be filled with filename of file database
-fileNameFileDB = ""
 
 # some color definitions
 colorFrame = ('#d9ffff', '#ffd9ff')             # light blue, light pink
@@ -58,13 +54,21 @@ colorButt  = ('#D9E9D9', '#E9D9D9', '#D9E9E9', '#E9D9B9', "#E1E190")
 
 #myFont = 'DejaVu Sans Mono'
 
+# Filenames
+scriptPathFileExt = __file__ if '__file__' in globals() else sys.argv[0]
+scriptPathFile = os.path.splitext(os.path.basename(scriptPathFileExt))[0]
+# filename of ini data
+fileNameInit = f'{scriptPathFile}.ini'
+# filename of file/groups database
+fileNameData = f'{scriptPathFile}.dat'
+
 # ------------------------------------------------------------------------------
 # helper -----------------------------------------------------------------------
 
 # File system operations -------------------------
 
 def delete_file( pathfile ):
-    if initData['DeleteToTrash']:
+    if tkVars['DeleteToTrash'].get():
         send2trash(pathfile)
     else:
         os.remove(pathfile)
@@ -72,8 +76,8 @@ def delete_file( pathfile ):
 
 def delete_empty_folder(folder):
     global initData
-    if initData['DelEmptyFolder']:
-        if initData['DeleteToTrash']:
+    if tkVars['DelEmptyFolder'].get():
+        if tkVars['DeleteToTrash'].get():
             send2trash(folder)
         else:
             os.rmdir(folder)
@@ -93,9 +97,16 @@ def tk_variables_register_and_init(key, typ):
         value = initData[key]
     elif key in defaultInitData:
         value = defaultInitData[key]
+    elif typ[0]=='b':
+        value = False
+    elif typ[0]=='s':
+        value = ''
     else:
-        value = False  if typ[0]=='b'  else  None
-        initData[key] = value
+        value = 0
+
+    #print(f'key:{key} : typ:{typ} : value:{value}')
+
+    initData[key] = value
 
     match typ[0]:
         case 's':   tkv = tk.StringVar(value=value)
@@ -113,6 +124,7 @@ def tk_variables_get_to_save():
 
 # General ----------------------------------------
 
+# convert integers into human readable with full numbers only
 def humreadX( v ):
     i = 0
     x = 1 if v == 0 else v
@@ -124,6 +136,7 @@ def humreadX( v ):
     v >>= (10 * i)
     return f'{v} {p[i]}'
 
+# convert integers into human readable with at least 3 valid numbers (with dot)
 def humread(n: int) -> str:
     import math
 
@@ -140,9 +153,7 @@ def humread(n: int) -> str:
     text = f"{value:.3g}"
     return f"{text} {units[unit]}"
 
-
 # Class for scrollable frames --------------------
-
 class ScrollableFrame(tk.Frame):
     def __init__(self, parent, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
@@ -213,23 +224,25 @@ def init_data_load():
     global initData, defaultInitData, searchFolders, searchFolderLast, fileNameInit
 
     # Read stored ini data from this file
-    fileNameInit = os.path.join(os.path.expanduser('~'), f'{__file__}.ini')
+    # fileNameInit = os.path.join(os.path.expanduser('~'), f'{__file__}.ini')
 
     # If no such file or failed, use this for initialization
     defaultInitData = { 'Version' : version,
                         'winSizeX':840, 'winSizeY':600,
                         'winPosX' :100, 'winPosY' :100,
-                        'DelEmptyFolder' : True ,
-                        'DeleteToTrash'  : False ,
-                        'SaveMarkTexts'  : True ,
-                        'SaveFileDB'     : False,
-                        'SearchFoldLast' : searchFolderLast,
-                        'SearchFolders'  : { os.path.expanduser('~') : 1 },
-                        'DelEmptyFolder' : True,
-                        'SaveMarkTexts'  : True,
-                        'UseFastHash'    : True,
-                        'HashBlkSize'    : "17",
-                        'HashBlkNum'     : "11",
+                        'DelEmptyFolder'    : True ,
+                        'DeleteToTrash'     : False ,
+                        'SaveMarkTexts'     : True ,
+                        'SaveFileDB'        : False,
+                        'SearchFoldLast'    : searchFolderLast,
+                        'SearchFolders'     : { os.path.expanduser('~') : 1 },
+                        'DelEmptyFolder'    : True,
+                        'SaveMarkTexts'     : True,
+                        'ShowFilesRight'    : True,
+                        'SortGroupsBigFirst': True,
+                        'UseFastHash'       : True,
+                        'HashBlkSize'       : "17",
+                        'HashBlkNum'        : "11",
                       }
 
     if os.path.exists(fileNameInit):
@@ -255,16 +268,12 @@ def init_data_check( root ):
     # Avoid that windows will initialy be placed outside the visible screen
     screenMaxX, screenMaxY = getScreenSize( root )
 
-    #print("initDataA:", initData, screenMaxX, screenMaxY)
-
     if initData['winSizeX'] > screenMaxX:   initData['winSizeX'] = screenMaxX
     if initData['winSizeY'] > screenMaxY:   initData['winSizeY'] = screenMaxY
     if initData['winPosX'] < 0:  initData['winPosX'] = 0
     if initData['winPosY'] < 0:  initData['winPosY'] = 0
     if (initData['winPosX'] + initData['winSizeX']) > screenMaxX:   initData['winPosX'] = screenMaxX - initData['winSizeX']
     if (initData['winPosY'] + initData['winSizeY']) > screenMaxY:   initData['winPosY'] = screenMaxY - initData['winSizeX']
-
-    #print("initDataB:", initData)
 
 # ------------------------------------------------------------------------------
 # menu ---------------------------------------------------------------------
@@ -406,24 +415,171 @@ def wmake_search_folder( tab ):
 # ------------------------------------------------------------------------------
 # Exclude tab ------------------------------------------------------------------
 
+exclIgnCase = False
+
+def excl_file_not_begin(pat:str, f:str, s:int) -> bool:
+    arr = shlex.split(pat)
+    return not any(f.startswith(x) for x in arr)
+
+def excl_file_not_contain(pat:str, f:str, s:int) -> bool:
+    arr = shlex.split(pat)
+    return not any(x in f for x in arr)
+
+def excl_file_not_end(pat:str, f:str, s:int) -> bool:
+    arr = shlex.split(pat)
+    return not any(f.endswith(x) for x in arr)
+
+def excl_file_begin(pat:str, f:str, s:int) -> bool:
+    arr = shlex.split(pat)
+    return any(f.startswith(x) for x in arr)
+
+def excl_file_contain(pat:str, f:str, s:int) -> bool:
+    arr = shlex.split(pat)
+    return any(x in f for x in arr)
+
+def excl_file_end(pat:str, f:str, s:int) -> bool:
+    arr = shlex.split(pat)
+    return any(f.endswith(x) for x in arr)
+
+# - - - - - -
+
+def excl_size_bigger(pat:str, f:str, s:int) -> bool:
+    return (s > int(pat))
+
+def excl_size_smaller(pat:str, f:str, s:int) -> bool:
+    return (s < int(pat))
+
+# - - - - - -
+
+def excl_dir_begin(pat:str, p:str) -> bool:
+    arr = shlex.split(pat)
+    return any(p.startswith(x) for x in arr)
+
+def excl_dir_contain(pat:str, p:str) -> bool:
+    arr = shlex.split(pat)
+    return any(x in p for x in arr)
+
+def excl_dir_end(pat:str, p:str) -> bool:
+    arr = shlex.split(pat)
+    return any(p.endswith(x) for x in arr)
+
+
+        # Keep only directories that should NOT be skipped
+        # dirnames[:] = [d for d in dirnames if not should_skip(d)]
+
+
+# List of all filter options, used to create exclude tab and to filter files
+exclOptionsFile=[
+    [excl_file_not_begin , "Exclude FILES whose names not begin with"   , None, None, colorBlock[1] ],
+    [excl_file_not_contain,"Exclude FILES whose names not contain"      , None, None, colorBlock[1] ],
+    [excl_file_not_end   , "Exclude FILES whose names not end with"     , None, None, colorBlock[1] ],
+    [excl_file_begin     , "Exclude FILES whose names begin with"       , None, None, colorBlock[2] ],
+    [excl_file_contain   , "Exclude FILES whose names contain"          , None, None, colorBlock[2] ],
+    [excl_file_end       , "Exclude FILES whose names end with"         , None, None, colorBlock[2] ],
+    [excl_size_smaller   , "Exclude FILES with size smaller than x"     , None, None, colorBlock[3] ],
+    [excl_size_bigger    , "Exclude FILES with size bigger than x"      , None, None, colorBlock[3] ] ]
+
+exclOptionsDir=[
+    [excl_dir_begin      , "Exclude FOLDERS whose names begin with"     , None, None, colorBlock[1] ],
+    [excl_dir_contain    , "Exclude FOLDERS whose names contain"        , None, None, colorBlock[1] ],
+    [excl_dir_end        , "Exclude FOLDERS whose names end with"       , None, None, colorBlock[1] ] ]
+
+# This function shall return True if file shall be ignored/excluded
+def excl_filter_file(filename:str, size:int) -> bool:
+    global tkv, exclOptionsFile
+
+    exclIgnoreCase = tkVars['ExcludeIgnoreCase'].get()
+    if exclIgnoreCase:  filename = filename.lower()
+
+    for filter in exclOptionsFile:          # walk through all filters
+        if filter[2].get():                 # if filter enabled
+            if filter[0] != None:           # if filter function defined
+                if exclIgnoreCase:          # if a filter returns true, exclude file
+                    if filter[0]( filter[3].get().lower(), filename, size ):  return True
+                else:                       # if a filter returns true, exclude file
+                    if filter[0]( filter[3].get(), filename, size ):  return True
+
+    return False                            # otherwise keep file -> return False
+
+# This function removes all dirs from dirnames which shall be ignored/excluded
+def excl_filter_dir(dirnames:list):
+
+    exclIgnoreCase = tkVars['ExcludeIgnoreCase'].get()
+
+    def should_skip( dirname ):
+        global exclOptionsDir
+
+        if exclIgnoreCase:  dirname = dirname.lower()
+
+        for filter in exclOptionsDir:           # walk through all filters
+            if filter[2].get():                 # if filter enabled
+                if filter[0] != None:           # if filter function defined
+                    if exclIgnoreCase:
+                        if filter[0]( filter[3].get().lower(), dirname ):  return True
+                    else:                       # if a filter returns true, exclude dir
+                        if filter[0]( filter[3].get(), dirname ):   return True
+
+        return False                            # otherwise keep dir -> return False
+
+    dirnames[:] = [d for d in dirnames if not should_skip(d)]
+
+# - - - - - - - - - - - - - - -
+
 def wmake_exclude( tab ):
-    labelExclude = ttk.Label(tab, text='to be defined')
-    labelExclude.pack(anchor=tk.CENTER, expand=True)
+    global exclOptionsGen, exclOptionsFile, exclOptionsDir
+
+    # Create the "ignore case" checkbutton
+    tk.Checkbutton(tab, text="Excludes shall ignore case in filters below",
+        variable=tk_variables_register_and_init('ExcludeIgnoreCase', 'bool')
+        ).pack(anchor="w", side='top', pady=(16,0) )
+
+    # Give help text how to fill the entry lines behind the checkboxes
+    tk.Label(tab, text='(use text in DOUBLE QUOTES, delimiter is SPACE: "pat1" "pat2")'
+            ).pack(anchor="ne", side='top', padx=(0,64), pady=(0,0) )
+
+    # Create a scrollable frame to hold all the exclude options
+    sf = ScrollableFrame( tab )
+    sf.pack(fill='both', pady=(0,0), expand=True)
+    excl_scrollable_frame = sf.scrollable_frame
+
+    # Fill in all the different possible selections from table above
+    block = ''
+    for exOpt in exclOptionsFile + exclOptionsDir:
+        # check if a block of options
+        if block == exOpt[4]:
+            distY = (1,1)
+        else:
+            distY = (8,1)
+            block = exOpt[4]
+        # Make a frame
+        frameL = ttk.Frame( excl_scrollable_frame )
+        frameL.pack(padx = 2, pady=distY, fill="x", expand=True, side=tk.TOP)
+        # Put a checkbutton on the left with some text
+        exOpt[2] = tk_variables_register_and_init("CB_"+exOpt[1], 'bool')
+        tk.Checkbutton(frameL, text=exOpt[1], variable=exOpt[2]).pack(anchor="w", side='left' )
+#        if inspect.isfunction(exOpt[0]):
+        exOpt[3] = tk_variables_register_and_init("VAL_"+exOpt[1], 'string')
+        entry = tk.Entry(frameL, textvariable=exOpt[3], font='TkFixedFont', bg=exOpt[4] )
+        entry.pack(side='left', padx=2, fill='x', expand=True)
+
+#    # - - - - - - - - - - File begins with pattern
+#    # Make a frame
+#    exclOnlyFileBeginFrame = ttk.Frame( tab )
+#    exclOnlyFileBeginFrame.pack(anchor="w", side='top', fill="x")
+#    # Put a checkbutton on the left with some text
+#    tk.Checkbutton(exclOnlyFileBeginFrame, text="Only add FILES whose names begin with (or):",
+#        variable=exclOnlyFileBegin ).pack(anchor="w", side='left', pady=(10,5) )
+#    # Put an entry right of the checkbutton to enter some patterns
+#    entry = ttk.Entry(exclOnlyFileBeginFrame, textvariable=exclOnlyFileBeginTxt)
+#    entry.pack(anchor="w", side='left', padx=(0,8), pady=(10,5), fill="x", expand=True)
 
 # ------------------------------------------------------------------------------
 # Search tab -------------------------------------------------------------------
 
 # Calc a hash over a file. If file is big then pick only a few parts and build
 # the hash over that. For smaller files build hash over full file content.
-# If you always want to build over full content then set blockSize=0 or blockCount=0
 
 def calc_b3_fast(filename, blockSize=131072, blockCount=8):
-    # Filename must be given and existing
-    if not filename or not os.path.isfile(filename):
-        print(f"ERROR: File '{filename}' doesn't exist or is not a file!", file=sys.stderr)
-        #sys.exit(1)
-        return None
-
     # Start a new hash calculation
     hasher = blake3()
     # Get size of the file
@@ -482,6 +638,17 @@ def calc_b3_fast(filename, blockSize=131072, blockCount=8):
             return None
 
 
+def calc_b3_fast_wrap(filename):
+    global initData
+
+    if tkVars['UseFastHash'].get():
+        return calc_b3_fast( filename,
+                             int(tkVars['HashBlkSize'].get()),
+                             int(tkVars['HashBlkNum'].get())   )
+    else:
+        return calc_b3_fast( filename, 0, 0 )
+
+
 def search_files( folder ):
     global fileDB, searchStopFlag, searchFileCnt
 
@@ -495,6 +662,10 @@ def search_files( folder ):
         return
 
     for dirpath, dirnames, filenames in os.walk(folder):
+
+        # Exclude dirnames according to specified exclude filters
+        excl_filter_dir(dirnames)
+
         # print(f'Current directory: {dirpath}')
         for filename in filenames:
             # If STOP flag is active then stop further operations immediatly
@@ -506,8 +677,12 @@ def search_files( folder ):
             # Links will not be handled but ignored instead
             if not os.path.isfile( file_path ):   continue
 
+            # Get file size for filters and for file database
             size_bytes = os.path.getsize(file_path)
             searchFileCnt += 1
+
+            # if the exclude filters return True, ignore this file and try next
+            if excl_filter_file(filename, size_bytes):  continue
 
             # every second print the number of files found, yet
             time_now = time.time()
@@ -520,35 +695,33 @@ def search_files( folder ):
             # if this is the first file with this size ...
             if size_bytes not in fileDB:
                 # store the size as key, filename in set, and DO NOT calculate the HASH
-                fileDB[size_bytes] = { '0' : { file_path : tk.BooleanVar(value=False) } }
+                fileDB[size_bytes] = { '0' : file_path }
             else:
                 # Get the DICT hash:{fn1, fn2 ...} for the size of this file
                 size_db = fileDB[size_bytes]
-                # if we have only 1 item, yet ... calculate its HASH and create heash branch
-                # and move previous element into new branch, later add also new item
+                # if we have already '0' item, ... calculate its HASH and create hash branch
+                # and move previous element into new branch, delete '0' and later add also new item
                 if '0' in size_db:
-                    # Get the only key we have in this DICT, yet
-                    #print(f'\nsize: {size_bytes} - file: {file_path}\nsdb: {size_db}')
-                    file_old, file_flag = next(iter( size_db['0'].items() ))
+                    # Get the only filename we have in this size-DICT, yet
+                    file_old = size_db['0']
                     # calculate HASH of the old/1st item, we did not before to save time
-                    hashval = calc_b3_fast( file_old )
-                    if not hashval:   continue
+                    hashval = calc_b3_fast_wrap( file_old )
+                    #if not hashval:   continue
                     del size_db['0']
-                    size_db[hashval] = { file_old : file_flag }
+                    size_db[hashval] = { file_old : False }
 
                 # calculate HASH of the new item
-                hashval = calc_b3_fast( file_path )
-                if not hashval:   continue
+                hashval = calc_b3_fast_wrap( file_path )
+                #if not hashval:   continue
                 if hashval in size_db:
                     if file_path not in size_db[hashval]:
-                        size_db[hashval][file_path] = tk.BooleanVar(value=False)
+                        size_db[hashval][file_path] = False
                 else:
-                    size_db[hashval] = { file_path : tk.BooleanVar(value=False) }
+                    size_db[hashval] = { file_path : False }
 
     # at the end display the complete number of files checked
     search_files.label.config(text=f"Processed: {searchFileCnt:,}")
     search_files.label.update()
-
 
 def search_start():
     global searchFolders, searchStopFlag
@@ -581,10 +754,19 @@ def search_cleanup():
     # Walk through the whole 'size' dictonary and delete all hash entries with only 1 file
     # Use list() because we may delete entries from dictionaries inside this loop
     for size in list(fileDB):
-        for hashval in list(fileDB[size]):
-            # if only 1 file in this set then it cannot be a duplicate -> delete
-            if len(fileDB[size][hashval]) <= 1 :
-                del fileDB[size][hashval]
+        size_db = fileDB[size]
+        for hashval in list(size_db):
+            hash_db = size_db[hashval]
+            # if hash_db points to string, it is single element -> delete
+            if isinstance(hash_db, str):    # if it is just a string -> single element
+                del size_db[hashval]
+            elif len(hash_db) <= 1:         # if 1 or less, no other with same hash
+                del size_db[hashval]
+            else:                           # valid hash_db
+                for f in hash_db:           # translate all 'bool' to 'tk.BooleanVar'
+                    b = hash_db[f]          # this is needed for save/restore fileDB
+                    hash_db[f] = tk.BooleanVar(value=b)  # no 'tk.BooleanVar' in JSON
+
         # if we have no hash element in this size entry anymore then delete this size entry
         grps = len(fileDB[size])
         if not grps:
@@ -605,7 +787,7 @@ def search_del_flag_chg(c, f):
 
 
 def search_update():
-    global fileDB, lastSelectedFile, colorFile
+    global fileDB, tkVars, lastSelectedFile, colorFile
 
     if not hasattr(search_update, "frame"):
         sys.exit("ERROR: Call to 'search_update' but not initialized 'search_update.frame'")
@@ -617,7 +799,12 @@ def search_update():
     for widget in search_update.frame.winfo_children():  widget.destroy()
 
     # Walk over all sizes and re-build a new list
-    for size in fileDB:
+    if tkVars['SortGroupsBigFirst'].get():
+        sizelist = sorted(fileDB, reverse=True )
+    else:
+        sizelist = fileDB.keys()
+
+    for size in sizelist:
         size_db = fileDB[size]
         # Walk over all hashes and create a frame per hash with headline
         for hashval in size_db:
@@ -647,6 +834,7 @@ def search_update():
                                  state="readonly",
                                  readonlybackground='' )
                 entry.pack(side='left', fill='x', expand=True)
+                if tkVars['ShowFilesRight'].get(): entry.xview_moveto(1.0)
                 entry.bind('<FocusIn>', lambda event, e=entry:
                            globals().__setitem__('lastSelectedFile', os.path.dirname(e.get())))
                 # save the entry at flag object to be able to change background color
@@ -734,10 +922,41 @@ def search_show():
     print(fileDB)
 
 def search_save():
-    global fileDB
+    global fileDB, fileNameData
+
+    # Copy my fileDB dict to new dict 'x' and replace tk.BooleanVar with 'bool'
+    x = {}
+    for s, hashes in sorted(fileDB.items(), reverse=True):  # s = size
+        x[s] = {}
+        for h, files in hashes.items():                     # h = hash
+            x[s][h] = {}
+            for f, var in files.items():                    # f = filename, var = tk.BooleanVar
+                x[s][h][f] = var.get()        # bool
+
+    with open(fileNameData, 'w', encoding='utf-8') as f:
+        json.dump(x, f, indent=1)
+        status_write(f'File/groups are written to file: {fileNameData}')
 
 def search_restore():
-    global fileDB
+    global fileDB, fileNameData
+
+    if os.path.exists(fileNameData):
+        with open(fileNameData, "r", encoding="utf-8") as f:
+            try:
+                raw = json.load(f)            # Reads file into a 'raw' Python dict
+            except json.JSONDecodeError:
+                print(f"File '{fileNameInit}' contains invalid JSON. Please fix or delete file")
+                exit(2)
+
+        # Convert the keys of 1st dict layer back to integers as original
+        fileDB = {int(k): v for k, v in raw.items()}
+
+        status_write(f'File/groups file loaded successfuly from file: {fileNameData}')
+        search_cleanup()
+        search_update()
+    else:
+        status_write(f'File/groups file not found: {fileNameData}')
+
 
 def wmake_search( tab ):
     # Create button frame
@@ -768,13 +987,12 @@ def wmake_search( tab ):
     butSearchStop = tk.Button( butSearchFrame, text='Restore list', command=search_restore, bg=colorButt[3] )
     butSearchStop.pack(padx = 10, pady=5, side=tk.LEFT)
 
-
+    # Create scrollable frame for the duplicate groups
     sf = ScrollableFrame( tab )
     sf.pack(fill='both', expand=True)
-    doubles_scrollable_frame = sf.scrollable_frame
+    search_update.frame = sf.scrollable_frame
     # Fill in the files
-    search_update.frame = doubles_scrollable_frame
-    search_update()
+    #search_update()
 
 # ------------------------------------------------------------------------------
 # Mark to delete ---------------------------------------------------------------
@@ -951,6 +1169,7 @@ def mark_strings_restore( svs, values ):
         #print(f'{sv} - {val}')
 
 def wmake_mark( tab ):
+    #    Function to call    , Text to show                                    , strVar, colors     , pick path
     markOptions=(
         [mark_length_name    , "Keep file with SHORTEST FILENAME"              , None ],
         [mark_length_path    , "Keep file with SHORTEST PATHNAME"              , None ],
@@ -963,14 +1182,8 @@ def wmake_mark( tab ):
         [mark_one_word_pafi  , "Keep file with ONE of these WORDS in PATHFILE:", None, colorBlock[3] ],
         [mark_all_words_pafi , "Keep file with ALL of these WORDS in PATHFILE:", None, colorBlock[3] ] )
 
-    chkbCond = tk_variables_register_and_init('CheckNotInvert', 'bool')
-    chkbIgCa = tk_variables_register_and_init('CheckIgnoreCase', 'bool')
-
-    i=0
-    for row in markOptions:
-        if len(row)>3:
-           row[2] = tk_variables_register_and_init(f'MarkText{i}', 'string')
-           i += 1
+    chkbCond = tk_variables_register_and_init('MarkNotInvert', 'bool')
+    chkbIgCa = tk_variables_register_and_init('MarkIgnoreCase', 'bool')
 
     # Inverter/NOT checkbox
     frameL = tk.Frame(tab)
@@ -993,12 +1206,14 @@ def wmake_mark( tab ):
         but.pack(padx = 2, pady=0, side=tk.LEFT)
         tk.Label(frameL, text=maOpt[1] ).pack(side=tk.LEFT, fill='x')
         if len(maOpt) > 3:
-            entry = tk.Entry(frameL, textvariable=maOpt[2], font='TkFixedFont', bg=maOpt[3] )
+            tkv = tk_variables_register_and_init("Mark:"+maOpt[1], 'string')
+            maOpt[2] = tkv
+            entry = tk.Entry(frameL, textvariable=tkv, font='TkFixedFont', bg=maOpt[3] )
             entry.pack(side='left', padx=2, fill='x', expand=True)
             if len(maOpt) > 4:
                 but_pick = tk.Button( frameL, text='pick', font=('Arial', 8) )
                 but_pick.pack(padx = 2, pady=0, side=tk.LEFT)
-                but_pick.config( command=lambda c=maOpt[2]: c.set(lastSelectedFile) )
+                but_pick.config( command=lambda c=tkv: c.set(lastSelectedFile) )
 
         but.config( command=lambda f=maOpt[0], s=maOpt[2]: mark_process(f,s,chkbCond.get(),chkbIgCa.get()) )
 
@@ -1008,27 +1223,35 @@ def wmake_mark( tab ):
 def wmake_settings( tab ):
     global initData
 
-    chkbDelEmpFold  = tk_variables_register_and_init('DelEmptyFolder', 'bool')
-    chkbDel2Trash   = tk_variables_register_and_init('DeleteToTrash' , 'bool')
-    chkbSaveMarkTxt = tk_variables_register_and_init('SaveMarkTexts' , 'bool')
-    chkbSaveFileDB  = tk_variables_register_and_init('SaveFileDB'    , 'bool')
-    chkbUseFastHash = tk_variables_register_and_init('UseFastHash'   , 'bool')
-    blockSize     = tk_variables_register_and_init('HashBlkSize'   , 'string')
-    blockSizeHR   = tk_variables_register_and_init('HashBlkSizeHR' , 'string')
-    blockNum      = tk_variables_register_and_init('HashBlkNum'    , 'string')
-    blockTotal    = tk_variables_register_and_init('HashBlkTotal'  , 'string')
+    chkbDelEmpFold   = tk_variables_register_and_init('DelEmptyFolder'    , 'bool')
+    chkbDel2Trash    = tk_variables_register_and_init('DeleteToTrash'     , 'bool')
+    chkbShowFileRight= tk_variables_register_and_init('ShowFilesRight'    , 'bool')
+    chkbGrpSortBig1st= tk_variables_register_and_init('SortGroupsBigFirst', 'bool')
+    chkbSaveMarkTxt  = tk_variables_register_and_init('SaveMarkTexts'     , 'bool')
+    chkbSaveFileDB   = tk_variables_register_and_init('SaveFileDB'        , 'bool')
+    chkbUseFastHash  = tk_variables_register_and_init('UseFastHash'       , 'bool')
+    blockSize        = tk_variables_register_and_init('HashBlkSize'       , 'string')
+    blockSizeHR      = tk_variables_register_and_init('HashBlkSizeHR'     , 'string')
+    blockNum         = tk_variables_register_and_init('HashBlkNum'        , 'string')
+    blockTotal       = tk_variables_register_and_init('HashBlkTotal'      , 'string')
 
     tk.Checkbutton(tab, text="Delete folder if they become empty by file removement",
-        variable=chkbDelEmpFold ).pack(anchor="w", side='top', pady=(10,5) )
+        variable=chkbDelEmpFold ).pack(anchor="w", side='top', pady=(0,16) )
 
     tk.Checkbutton(tab, text="Delete to TRASH instead of real deletion",
-        variable=chkbDel2Trash ).pack(anchor="w", side='top', pady=(10,5) )
+        variable=chkbDel2Trash ).pack(anchor="w", side='top', pady=(0,16) )
+
+    tk.Checkbutton(tab, text="Show long filenames by shifting right",
+        variable=chkbShowFileRight ).pack(anchor="w", side='top', pady=(0,16) )
+
+    tk.Checkbutton(tab, text="Sort groups with biggest file size first",
+        variable=chkbGrpSortBig1st ).pack(anchor="w", side='top', pady=(0,16) )
 
     tk.Checkbutton(tab, text="Save settings from the MARK tab at program's end",
-        variable=chkbSaveMarkTxt ).pack(anchor="w", side='top', pady=5)
+        variable=chkbSaveMarkTxt ).pack(anchor="w", side='top', pady=(0,16) )
 
     tk.Checkbutton(tab, text="Store file database at program's end to continue on next start without new 'search'",
-        variable=chkbSaveFileDB ).pack(anchor="w", side='top', pady=5)
+        variable=chkbSaveFileDB ).pack(anchor="w", side='top', pady=(0,16) )
 
     # Create a frame for the fast hash options
     def blockUpdate():
@@ -1041,14 +1264,13 @@ def wmake_settings( tab ):
     fastHashFrame.pack(anchor="w", side='top', fill="x")
 
     tk.Checkbutton(fastHashFrame, text="Use fast file hashing for big files",
-        variable=chkbDelEmpFold ).pack(anchor="w", side='left', pady=(10,5) )
+        variable=chkbUseFastHash ).pack(anchor="w", side='left', pady=(10,5) )
 
     label = tk.Label(fastHashFrame, text="Block: 2^")
     label.pack(anchor="w", side='left', padx=(25,0), pady=(10,5), fill="x")
 
     spinbox = tk.Spinbox( fastHashFrame, from_= 9, to=30, wrap=True, width=3,
-        textvariable=blockSize,
-        command=blockUpdate )
+                          textvariable=blockSize, command=blockUpdate )
     spinbox.pack(anchor="w", side='left', pady=(10,5), padx=(2,5))
 
     # A helper label to show the selected value in a human readable format
