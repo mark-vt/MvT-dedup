@@ -846,7 +846,7 @@ def search_update():
                 # line is complete now, display it
                 frameL.pack(fill='x', padx=2, pady=1, expand=True, side='top')
 
-    status_write( "Build list with duplicates ... DONE" )
+    status_write( "Build list with duplicates ... DONE, display may be delayed" )
 
 def search_delete_file_from_db(size, hashval, filename):
     global fileDB
@@ -951,7 +951,7 @@ def search_restore():
         # Convert the keys of 1st dict layer back to integers as original
         fileDB = {int(k): v for k, v in raw.items()}
 
-        status_write(f'File/groups file loaded successfuly from file: {fileNameData}')
+        status_write(f'Files/groups loaded successfuly from file: {fileNameData}')
         search_cleanup()
         search_update()
     else:
@@ -1236,7 +1236,7 @@ def wmake_settings( tab ):
     blockTotal       = tk_variables_register_and_init('HashBlkTotal'      , 'string')
 
     tk.Checkbutton(tab, text="Delete folder if they become empty by file removement",
-        variable=chkbDelEmpFold ).pack(anchor="w", side='top', pady=(0,16) )
+        variable=chkbDelEmpFold ).pack(anchor="w", side='top', pady=(16,16) )
 
     tk.Checkbutton(tab, text="Delete to TRASH instead of real deletion",
         variable=chkbDel2Trash ).pack(anchor="w", side='top', pady=(0,16) )
@@ -1363,7 +1363,7 @@ if __name__ == "__main__":
     #print("initData3:", initData)
 
     root.geometry(f"{initData['winSizeX']}x{initData['winSizeY']}+{initData['winPosX']}+{initData['winPosY']}")
-    root.title('De-Duplicator')
+    root.title('MvT De-Duplicator')
 
     main( root )
 
