@@ -33,6 +33,10 @@ tkVars = {}
 
 # hold the list of files with duplicates
 fileDB = {}
+# hold connection from treeview item to fileDB entry
+iidDB = {}    
+# Will be set by function 'on_click' with iid+col of clicked line
+current_iid = (None,None)
 
 # hold folders to be searched
 searchFolders      = {}
@@ -51,6 +55,12 @@ colorFrame = ('#d9ffff', '#ffd9ff')             # light blue, light pink
 colorFile  = ('#ccffcc', '#ffcccc')             # light green, light red
 colorBlock = ('#FFFFFF', '#FFEEFF', '#DDFFFF', '#FFFFDD')  # white, very light pink, light blue, light yellow
 colorButt  = ('#D9E9D9', '#E9D9D9', '#D9E9E9', '#E9D9B9', "#E1E190")
+
+# some char definitions
+boxUnchecked = "☐"
+boxChecked   = "☑"
+boxCrossed   = "☒"
+boxChar      = (boxUnchecked, boxCrossed)
 
 #myFont = 'DejaVu Sans Mono'
 
@@ -775,7 +785,7 @@ def search_cleanup():
             groups += grps
     status_write( f"Remove single entries ... DONE, {groups} groups found" )
 
-
+# Changes the background color of an entry if clicked by mouse
 def search_del_flag_chg(c, f):
     e =  c.entry
     if f:
@@ -785,19 +795,7 @@ def search_del_flag_chg(c, f):
         c.set(0)
         e.config(bg=colorFile[0])
 
-
-def search_update():
-    global fileDB, tkVars, lastSelectedFile, colorFile
-
-    if not hasattr(search_update, "frame"):
-        sys.exit("ERROR: Call to 'search_update' but not initialized 'search_update.frame'")
-
-    i=0
-    status_write( "Build list with duplicates ..." )
-
-    # Completely remove the old list
-    for widget in search_update.frame.winfo_children():  widget.destroy()
-
+def search_update_CbEntry( frame ):
     # Walk over all sizes and re-build a new list
     if tkVars['SortGroupsBigFirst'].get():
         sizelist = sorted(fileDB, reverse=True )
@@ -809,7 +807,7 @@ def search_update():
         # Walk over all hashes and create a frame per hash with headline
         for hashval in size_db:
             hash_db = size_db[hashval]
-            frameH = tk.Frame(search_update.frame, borderwidth=1, relief='solid', bg=colorFrame[i] )
+            frameH = tk.Frame(frame, borderwidth=1, relief='solid', bg=colorFrame[i] )
             frameH.pack(fill='x', padx=2, pady=1, expand=True, side='top')
             hsize = humread( size )
             tk.Label(frameH, text=f"{hsize} ({size:,}) - {hashval}", bg=colorFrame[i], font=('Arial', 9) ).pack(side='top', fill='x')
@@ -846,8 +844,177 @@ def search_update():
                 # line is complete now, display it
                 frameL.pack(fill='x', padx=2, pady=1, expand=True, side='top')
 
+def search_update_tree( frame ):
+    global iidDB, fileDB, current_iid
+
+    # Create a tree widget which is scrollable
+    tree  = ttk.Treeview(frame,columns=("Name") )
+    tree.heading("#0", text="del")
+    tree.heading("Name", text="Name")
+    tree.column("#0", width=52, minwidth=52, stretch=False)
+    tree.column("Name", width=3000, minwidth=400, stretch=True)
+
+    v_scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
+    h_scrollbar = ttk.Scrollbar(frame, orient=tk.HORIZONTAL, command=tree.xview)
+    tree.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+    v_scrollbar.pack(side=tk.RIGHT, fill="y")
+    h_scrollbar.pack(side=tk.BOTTOM, fill="x")
+    
+    tree.pack(side=tk.LEFT,fill=tk.BOTH, expand=True)
+    
+    # define colors
+    tree.tag_configure("col0", background=colorFile[0])
+    tree.tag_configure("col1", background=colorFile[1])
+    
+    def set_tree_entry(iid, dbEntry, flag):
+        dbEntry.set(flag)
+        current_tags = set(tree.item(iid, "tags"))
+        if flag:
+            current_tags.discard("col0")
+            current_tags.add("col1")
+        else:
+            current_tags.discard("col1")
+            current_tags.add("col0")
+        tree.item(iid, text=boxChar[flag], tags=tuple(current_tags))
+
+    # If clicks with right mouse button then some actions can be taken
+    def menu_action(action):
+        iid, col = current_iid
+        if not iid:  return
+        (size,hashval,filename) = iidDB.get(iid,(None,None,None))    # Give False if no such iid key
+        if not filename: return 
+
+        match action:
+            case "markOther":
+                for file in fileDB[size][hashval]:
+                    flagObj = fileDB[size][hashval][file]
+                    iid     = flagObj.entry
+                    flag    = file != filename
+                    set_tree_entry(iid, flagObj, flag)
+            case "markThis":
+                set_tree_entry(iid, fileDB[size][hashval][filename], True)
+            case "keepThis":
+                set_tree_entry(iid, fileDB[size][hashval][filename], False)
+            case "copyPF":
+                root.clipboard_clear()
+                root.clipboard_append(filename)
+            case "copyP":
+                root.clipboard_clear()
+                root.clipboard_append(os.path.dirname(filename))
+            case "copyF":
+                root.clipboard_clear()
+                root.clipboard_append(os.path.basename(filename))
+            case "delete":
+                if search_delete_file_from_db(size, hashval, filename):
+                    tree.delete(tree.parent(iid))
+                else:
+                    tree.delete(iid)
+
+    # Menu if right-click to CheckBox
+    menu0 = tk.Menu(root, tearoff=0)
+    menu0.add_command(label="Mark all other for deletion", command=lambda: menu_action("markOther"))
+    menu0.add_command(label="Mark this file for deletion", command=lambda: menu_action("markThis"))
+    menu0.add_command(label="Keep this file", command=lambda: menu_action("keepThis"))
+    menu0.add_separator()
+    menu0.add_command(label="!Delete immediatly!", command=lambda: menu_action("delete"))    
+    # Menu if right-click to path/file
+    menu1 = tk.Menu(root, tearoff=0)
+    menu1.add_command(label="Copy path/filename to clipboard", command=lambda: menu_action("copyPF"))
+    menu1.add_command(label="Copy only path to clipboard", command=lambda: menu_action("copyP"))
+    menu1.add_command(label="Copy only filename to clipboard", command=lambda: menu_action("copyF"))
+    menu1.add_separator()
+    menu1.add_command(label="!Delete immediatly!", command=lambda: menu_action("delete"))    
+    
+    # Helper function for normal/left clicks -> toggle del marker or pick for marking
+    def on_click(event):
+        global current_iid
+        
+        iid = tree.identify_row(event.y)
+        if not iid:   return
+        col = tree.identify_column(event.x)
+        
+        (size,hashval,filename) = iidDB.get(iid,(None,None,None))    # Give False if no such iid key
+        if not filename: return 
+        
+        if event.num == 1:                              # if left mouse button
+            # if click to Checkbox then toggle state
+            if col == "#0":
+                flag = not fileDB[size][hashval][filename].get()
+                set_tree_entry(iid, fileDB[size][hashval][filename], flag)
+            else:       # if column "Name"
+                globals().__setitem__('lastSelectedFile', os.path.dirname(filename))
+        elif event.num == 3:                            # if right mouse button
+            current_iid = (iid,col)     # needed by menu_action
+            #tree.selection_set(iid)     # mark this entry
+            if col == "#0":             # if click to column #0 
+                # show menu0 at mouse position
+                try:
+                    menu0.tk_popup(event.x_root, event.y_root)
+                finally:
+                    menu0.grab_release()
+            else:                       # if click to other than column #0
+                # show menu1 at mouse position
+                try:
+                    menu1.tk_popup(event.x_root, event.y_root)
+                finally:
+                    menu1.grab_release()
+            
+
+    tree.bind("<Button-1>", on_click)    
+    tree.bind("<Button-3>", on_click)    
+    
+
+    # Walk over all sizes and re-build a new list
+    if tkVars['SortGroupsBigFirst'].get():
+        sizelist = sorted(fileDB, reverse=True )
+    else:
+        sizelist = fileDB.keys()
+
+    for size in sizelist:
+        size_db = fileDB[size]
+        # Walk over all hashes and create a frame per hash with headline
+        for hashval in size_db:
+
+            hash_db = size_db[hashval]
+            hashLen = len(hash_db)
+            headline = humread( size ) + f' - {hashval}'
+            headL = tree.insert("", tk.END, text=f'{hashLen}', values=(headline,), open=True )   # comma is IMPORTANT!!!
+
+            # Walk over all files, create a frameL per file with filename and selectors
+            for filename in hash_db:
+                flagObj = hash_db[filename]
+                flag    = flagObj.get()
+                preBox  = boxChar[flag]
+                colTag  = "col1" if flag else "col0"
+                entry   = tree.insert(headL, tk.END, text=preBox, values=(filename), tags=(colTag,) )
+                #entry.pack(side='left', fill='x', expand=True)
+                # save the entry at flag object to be able to change background color
+                flagObj.entry = entry
+                iidDB[entry] = (size,hashval,filename)
+
+
+# Completely rebuild the file list with CheckBoxes in a scrollable frame
+# May need some time on bigger lists or on slow networks if running remote.
+def search_update():
+    global fileDB, tkVars, lastSelectedFile, colorFile
+
+    if not hasattr(search_update, "frame"):
+        sys.exit("ERROR: Call to 'search_update' but not initialized 'search_update.frame'")
+
+    i=0
+    status_write( "Build list with duplicates ..." )
+
+    # Completely remove the old list
+    for widget in search_update.frame.winfo_children():  widget.destroy()
+
+    #search_update_CbEntry( search_update.frame )
+    search_update_tree( search_update.frame )
+
     status_write( "Build list with duplicates ... DONE, display may be delayed" )
 
+# A single entry in the DB will be deleted here. If last entry or if only one
+# entry left (which shall not be deleted), then remove hash entry, too. If this
+# was last hash, delete also size entry. The file itself will NOT be deleted here.
 def search_delete_file_from_db(size, hashval, filename):
     global fileDB
     status_write( f"Delete from DB: {filename}" )
@@ -863,13 +1030,20 @@ def search_delete_file_from_db(size, hashval, filename):
             delFlag = fileDB[size][hashval][filename].get()
             # if also the last file shall be deleted, do NOT delete the branch
             # below because otherwise we get an error at deleting the last one
-            if delFlag:  return
+            if delFlag:  return False     # Indicate that only file was deleted
 
+        # if 1 or 0 files with this hash, also delete hash entry
         del fileDB[size][hashval]
+
         # if no more file hashs for this size, delete size entry
         if len(fileDB[size]) == 0:
             del fileDB[size]
+            
+        return True                       # Indicate that also hash was deleted
+    
+    return False                          # Indicate that only file was deleted
 
+# if little 'del' button was pressed to delete a file directly, do it here
 def search_delete_direct(size, hashval, filename, linewidget, hashwidget):
     global fileDB
     status_write( f"Delete direct: {filename}" )
@@ -877,14 +1051,15 @@ def search_delete_direct(size, hashval, filename, linewidget, hashwidget):
     delete_file(filename)
 
     # Delete the entry in the data base, remove full branch if less than 2 files
-    search_delete_file_from_db(size, hashval, filename)
-
-    # remove only the line if other files there, otherwise complete hash entry
-    if (size in fileDB) and (hashval in fileDB[size]):
-        linewidget.destroy()
-    else:
+    # returns False if only the file was deleted, returns True if hash, too
+    # if !(size in fileDB) or !(hashval in fileDB[size]):
+    if search_delete_file_from_db(size, hashval, filename):
         hashwidget.destroy()
+    else:
+        linewidget.destroy()
 
+# Walk through the whole DB and delete all files marked for to be deleted
+# In a 2nd run delete then all DB entries where file was deleted before
 def search_delete_marked():
     global fileDB
     status_write( "Delete marked!" )
@@ -917,10 +1092,12 @@ def search_delete_marked():
     # Update the displayed list of duplicate files
     search_update()
 
+# Debug function to print the content of the DB to console
 def search_show():
     global fileDB
     print(fileDB)
 
+# Write the DB into a JSON file
 def search_save():
     global fileDB, fileNameData
 
@@ -937,6 +1114,7 @@ def search_save():
         json.dump(x, f, indent=1)
         status_write(f'File/groups are written to file: {fileNameData}')
 
+# Read database from JSON file and put it into my DB, old data in DB will be overwritten
 def search_restore():
     global fileDB, fileNameData
 
@@ -976,6 +1154,7 @@ def wmake_search( tab ):
     #butSearchStop.pack(padx = 10, pady=5, side=tk.LEFT)
     # Create a scrollable frame to hold all the file groups/entries
 
+    # With this label the number of files processed are shown right of buttons
     labelSearchProgress = tk.Label( butSearchFrame, text='Progress: ' )
     labelSearchProgress.pack(padx = 10, pady=5, side=tk.LEFT)
     search_files.label = labelSearchProgress
@@ -988,9 +1167,15 @@ def wmake_search( tab ):
     butSearchStop.pack(padx = 10, pady=5, side=tk.LEFT)
 
     # Create scrollable frame for the duplicate groups
-    sf = ScrollableFrame( tab )
-    sf.pack(fill='both', expand=True)
-    search_update.frame = sf.scrollable_frame
+
+    #sf = ScrollableFrame( tab )
+    #sf.pack(fill='both', expand=True)
+    #search_update.frame = sf.scrollable_frame
+
+    searchListFrame = ttk.Frame( tab )
+    searchListFrame.pack(fill='both', expand=True, padx=4, pady=0)
+    search_update.frame = searchListFrame
+
     # Fill in the files
     #search_update()
 
