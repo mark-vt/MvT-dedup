@@ -34,7 +34,9 @@ tkVars = {}
 # hold the list of files with duplicates
 fileDB = {}
 # hold connection from treeview item to fileDB entry
-iidDB = {}    
+iidDB = {}
+# The file tree TK structure which holds all the diplicates in TreeView way
+tree = None
 # Will be set by function 'on_click' with iid+col of clicked line
 current_iid = (None,None)
 
@@ -80,18 +82,20 @@ fileNameData = f'{scriptPathFile}.dat'
 def delete_file( pathfile ):
     if tkVars['DeleteToTrash'].get():
         send2trash(pathfile)
+        status_write(f"File {pathfile} moved to trash!")
     else:
         os.remove(pathfile)
-    print(f"File {pathfile} deleted!")
+        status_write(f"File {pathfile} deleted!")
 
 def delete_empty_folder(folder):
     global initData
     if tkVars['DelEmptyFolder'].get():
         if tkVars['DeleteToTrash'].get():
             send2trash(folder)
+            status_write(f"Empty folder {folder} moved into trash!")
         else:
             os.rmdir(folder)
-        print(f"Empty folder {folder} deleted!")
+            status_write(f"Empty folder {folder} deleted!")
 
 def is_dir_empty(path: str) -> bool:
     # os.scandir returns an iterator of DirEntry objects.
@@ -427,6 +431,8 @@ def wmake_search_folder( tab ):
 
 exclIgnCase = False
 
+# - - - - - - FILE pattern
+
 def excl_file_not_begin(pat:str, f:str, s:int) -> bool:
     arr = shlex.split(pat)
     return not any(f.startswith(x) for x in arr)
@@ -451,7 +457,7 @@ def excl_file_end(pat:str, f:str, s:int) -> bool:
     arr = shlex.split(pat)
     return any(f.endswith(x) for x in arr)
 
-# - - - - - -
+# - - - - - - FILE size
 
 def excl_size_bigger(pat:str, f:str, s:int) -> bool:
     return (s > int(pat))
@@ -459,7 +465,19 @@ def excl_size_bigger(pat:str, f:str, s:int) -> bool:
 def excl_size_smaller(pat:str, f:str, s:int) -> bool:
     return (s < int(pat))
 
-# - - - - - -
+# - - - - - - DIR pattern
+
+def excl_dir_not_begin(pat:str, p:str) -> bool:
+    arr = shlex.split(pat)
+    return not any(p.startswith(x) for x in arr)
+
+def excl_dir_not_contain(pat:str, p:str) -> bool:
+    arr = shlex.split(pat)
+    return not any(x in p for x in arr)
+
+def excl_dir_not_end(pat:str, p:str) -> bool:
+    arr = shlex.split(pat)
+    return not any(p.endswith(x) for x in arr)
 
 def excl_dir_begin(pat:str, p:str) -> bool:
     arr = shlex.split(pat)
@@ -473,10 +491,8 @@ def excl_dir_end(pat:str, p:str) -> bool:
     arr = shlex.split(pat)
     return any(p.endswith(x) for x in arr)
 
-
-        # Keep only directories that should NOT be skipped
-        # dirnames[:] = [d for d in dirnames if not should_skip(d)]
-
+    # Keep only directories that should NOT be skipped
+    # dirnames[:] = [d for d in dirnames if not should_skip(d)]
 
 # List of all filter options, used to create exclude tab and to filter files
 exclOptionsFile=[
@@ -489,10 +505,16 @@ exclOptionsFile=[
     [excl_size_smaller   , "Exclude FILES with size smaller than x"     , None, None, colorBlock[3] ],
     [excl_size_bigger    , "Exclude FILES with size bigger than x"      , None, None, colorBlock[3] ] ]
 
+exclOptionsDelimiter=[
+    [None                , None                                         , None, None, -1            ] ]
+
 exclOptionsDir=[
-    [excl_dir_begin      , "Exclude FOLDERS whose names begin with"     , None, None, colorBlock[1] ],
-    [excl_dir_contain    , "Exclude FOLDERS whose names contain"        , None, None, colorBlock[1] ],
-    [excl_dir_end        , "Exclude FOLDERS whose names end with"       , None, None, colorBlock[1] ] ]
+    [excl_dir_not_begin  , "Exclude FOLDERS whose names begin with"     , None, None, colorBlock[1] ],
+    [excl_dir_not_contain, "Exclude FOLDERS whose names contain"        , None, None, colorBlock[1] ],
+    [excl_dir_not_end    , "Exclude FOLDERS whose names end with"       , None, None, colorBlock[1] ],
+    [excl_dir_begin      , "Exclude FOLDERS whose names begin with"     , None, None, colorBlock[2] ],
+    [excl_dir_contain    , "Exclude FOLDERS whose names contain"        , None, None, colorBlock[2] ],
+    [excl_dir_end        , "Exclude FOLDERS whose names end with"       , None, None, colorBlock[2] ] ]
 
 # This function shall return True if file shall be ignored/excluded
 def excl_filter_file(filename:str, size:int) -> bool:
@@ -544,7 +566,7 @@ def wmake_exclude( tab ):
         ).pack(anchor="w", side='top', pady=(16,0) )
 
     # Give help text how to fill the entry lines behind the checkboxes
-    tk.Label(tab, text='(use text in DOUBLE QUOTES, delimiter is SPACE: "pat1" "pat2")'
+    tk.Label(tab, text='(use text in DOUBLE QUOTES, delimiter is SPACE: "pat1" "pat2", logic is OR)'
             ).pack(anchor="ne", side='top', padx=(0,64), pady=(0,0) )
 
     # Create a scrollable frame to hold all the exclude options
@@ -554,10 +576,16 @@ def wmake_exclude( tab ):
 
     # Fill in all the different possible selections from table above
     block = ''
-    for exOpt in exclOptionsFile + exclOptionsDir:
+    for exOpt in exclOptionsFile + exclOptionsDelimiter + exclOptionsDir:
         # check if a block of options
         if block == exOpt[4]:
             distY = (1,1)
+        elif exOpt[4] == -1:
+            block = exOpt[4]
+            continue
+        elif block == -1:
+            distY = (32,1)
+            block = exOpt[4]
         else:
             distY = (8,1)
             block = exOpt[4]
@@ -570,18 +598,7 @@ def wmake_exclude( tab ):
 #        if inspect.isfunction(exOpt[0]):
         exOpt[3] = tk_variables_register_and_init("VAL_"+exOpt[1], 'string')
         entry = tk.Entry(frameL, textvariable=exOpt[3], font='TkFixedFont', bg=exOpt[4] )
-        entry.pack(side='left', padx=2, fill='x', expand=True)
-
-#    # - - - - - - - - - - File begins with pattern
-#    # Make a frame
-#    exclOnlyFileBeginFrame = ttk.Frame( tab )
-#    exclOnlyFileBeginFrame.pack(anchor="w", side='top', fill="x")
-#    # Put a checkbutton on the left with some text
-#    tk.Checkbutton(exclOnlyFileBeginFrame, text="Only add FILES whose names begin with (or):",
-#        variable=exclOnlyFileBegin ).pack(anchor="w", side='left', pady=(10,5) )
-#    # Put an entry right of the checkbutton to enter some patterns
-#    entry = ttk.Entry(exclOnlyFileBeginFrame, textvariable=exclOnlyFileBeginTxt)
-#    entry.pack(anchor="w", side='left', padx=(0,8), pady=(10,5), fill="x", expand=True)
+        entry.pack(side='left', padx=(2,8), fill='x', expand=True)
 
 # ------------------------------------------------------------------------------
 # Search tab -------------------------------------------------------------------
@@ -647,7 +664,7 @@ def calc_b3_fast(filename, blockSize=131072, blockCount=8):
             print(f"Dateifehler: {e}")
             return None
 
-
+# Depending on configuration alway calc full hash or part-hash for big files
 def calc_b3_fast_wrap(filename):
     global initData
 
@@ -658,7 +675,8 @@ def calc_b3_fast_wrap(filename):
     else:
         return calc_b3_fast( filename, 0, 0 )
 
-
+# Walk through the given folder and it's subfolders and add all files which
+# are not excluded to my database
 def search_files( folder ):
     global fileDB, searchStopFlag, searchFileCnt
 
@@ -733,6 +751,7 @@ def search_files( folder ):
     search_files.label.config(text=f"Processed: {searchFileCnt:,}")
     search_files.label.update()
 
+# Walk over all folders given in FOLDER-TAB and add their files to database
 def search_start():
     global searchFolders, searchStopFlag
 
@@ -752,11 +771,13 @@ def search_start():
         search_cleanup()
         search_update()
 
+# This will be called if STOP button was pressed to interrupt the file addition
 def search_stop():
     global searchStopFlag
     searchStopFlag = True
     status_write( "STOP button pressed!" )
 
+# Walk over the database with ALL files and remove everything which has no duplicates
 def search_cleanup():
     global fileDB
     status_write( "Remove single entries ..." )
@@ -785,89 +806,14 @@ def search_cleanup():
             groups += grps
     status_write( f"Remove single entries ... DONE, {groups} groups found" )
 
-# Changes the background color of an entry if clicked by mouse
-def search_del_flag_chg(c, f):
-    e =  c.entry
-    if f:
-        c.set(1)
-        e.config(bg=colorFile[1])
-    else:
-        c.set(0)
-        e.config(bg=colorFile[0])
+# Changes the background color of an entry if e.g. clicked by mouse
 
-def search_update_CbEntry( frame ):
-    # Walk over all sizes and re-build a new list
-    if tkVars['SortGroupsBigFirst'].get():
-        sizelist = sorted(fileDB, reverse=True )
-    else:
-        sizelist = fileDB.keys()
+def search_del_flag_chg(flagObj, flag):
+    global tree
 
-    for size in sizelist:
-        size_db = fileDB[size]
-        # Walk over all hashes and create a frame per hash with headline
-        for hashval in size_db:
-            hash_db = size_db[hashval]
-            frameH = tk.Frame(frame, borderwidth=1, relief='solid', bg=colorFrame[i] )
-            frameH.pack(fill='x', padx=2, pady=1, expand=True, side='top')
-            hsize = humread( size )
-            tk.Label(frameH, text=f"{hsize} ({size:,}) - {hashval}", bg=colorFrame[i], font=('Arial', 9) ).pack(side='top', fill='x')
-            i ^= 1
-            # Walk over all files, create a frameL per file with filename and selectors
-            for filename in hash_db:
-                # A HASH frame contains multiple FILE frames, one per file
-                frameL = tk.Frame(frameH)
-                flagObj = hash_db[filename]
-                #print (flagObj, hash_db[filename] )
-                # a FILE frame has a Checkbutton, Button, Entry
-                chkb = tk.Checkbutton(frameL, text="del ", variable=flagObj )
-                chkb.pack(side='left')
-                butt = tk.Button(frameL, text="del now", font=('Arial', 8),
-                                 command=lambda s=size, h=hashval, f=filename, l=frameL, g=frameH:
-                                         search_delete_direct(s,h,f,l,g) )
-                butt.pack(side='left')
-                entry = tk.Entry(frameL,
-                                 textvariable=tk.StringVar(value=filename),
-                                 font='TkFixedFont',
-                                 bg=colorFile[flagObj.get()],
-                                 state="readonly",
-                                 readonlybackground='' )
-                entry.pack(side='left', fill='x', expand=True)
-                if tkVars['ShowFilesRight'].get(): entry.xview_moveto(1.0)
-                entry.bind('<FocusIn>', lambda event, e=entry:
-                           globals().__setitem__('lastSelectedFile', os.path.dirname(e.get())))
-                # save the entry at flag object to be able to change background color
-                flagObj.entry = entry
-                # if checkbutton toggles, define callback lambda to change background of entry
-                chkb.config(command=lambda v=flagObj:
-                    v.entry.config(bg=colorFile[1] if v.get() else colorFile[0]))
-
-                # line is complete now, display it
-                frameL.pack(fill='x', padx=2, pady=1, expand=True, side='top')
-
-def search_update_tree( frame ):
-    global iidDB, fileDB, current_iid
-
-    # Create a tree widget which is scrollable
-    tree  = ttk.Treeview(frame,columns=("Name") )
-    tree.heading("#0", text="del")
-    tree.heading("Name", text="Name")
-    tree.column("#0", width=52, minwidth=52, stretch=False)
-    tree.column("Name", width=3000, minwidth=400, stretch=True)
-
-    v_scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
-    h_scrollbar = ttk.Scrollbar(frame, orient=tk.HORIZONTAL, command=tree.xview)
-    tree.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
-    v_scrollbar.pack(side=tk.RIGHT, fill="y")
-    h_scrollbar.pack(side=tk.BOTTOM, fill="x")
-    
-    tree.pack(side=tk.LEFT,fill=tk.BOTH, expand=True)
-    
-    # define colors
-    tree.tag_configure("col0", background=colorFile[0])
-    tree.tag_configure("col1", background=colorFile[1])
-    
-    def set_tree_entry(iid, dbEntry, flag):
-        dbEntry.set(flag)
+    if flagObj.get() != flag:
+        flagObj.set(flag)
+        iid = flagObj.entry
         current_tags = set(tree.item(iid, "tags"))
         if flag:
             current_tags.discard("col0")
@@ -877,76 +823,102 @@ def search_update_tree( frame ):
             current_tags.add("col0")
         tree.item(iid, text=boxChar[flag], tags=tuple(current_tags))
 
+def search_update_tree( frame ):
+    global tree, iidDB, fileDB, current_iid
+
+    # If the tree already exists, completley destroy it
+    if tree:    tree.destroy()
+
+    # Create a tree widget which is scrollable
+    tree = ttk.Treeview(frame,columns=("Name",) )       # The last comma is important to get tupple
+    tree.heading("#0", text="del")
+    tree.heading("Name", text="    Name", anchor="w")
+    tree.column("#0", width=52, minwidth=52, stretch=False)
+    tree.column("Name", width=3000, minwidth=400, stretch=True)
+
+    v_scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
+    h_scrollbar = ttk.Scrollbar(frame, orient=tk.HORIZONTAL, command=tree.xview)
+    tree.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+    v_scrollbar.pack(side=tk.RIGHT, fill="y")
+    h_scrollbar.pack(side=tk.BOTTOM, fill="x")
+
+    tree.pack(side=tk.LEFT,fill=tk.BOTH, expand=True)
+
+    # define colors
+    tree.tag_configure("col0", background=colorFile[0])
+    tree.tag_configure("col1", background=colorFile[1])
+
     # If clicks with right mouse button then some actions can be taken
     def menu_action(action):
         iid, col = current_iid
         if not iid:  return
         (size,hashval,filename) = iidDB.get(iid,(None,None,None))    # Give False if no such iid key
-        if not filename: return 
+        if not filename: return
 
         match action:
             case "markOther":
                 for file in fileDB[size][hashval]:
+                    search_del_flag_chg(fileDB[size][hashval][file], file != filename)
+            case "invertMarks":
+                for file in fileDB[size][hashval]:
                     flagObj = fileDB[size][hashval][file]
-                    iid     = flagObj.entry
-                    flag    = file != filename
-                    set_tree_entry(iid, flagObj, flag)
+                    flag    = not flagObj.get()
+                    search_del_flag_chg(flagObj, not flagObj.get())
             case "markThis":
-                set_tree_entry(iid, fileDB[size][hashval][filename], True)
+                search_del_flag_chg(fileDB[size][hashval][filename], True)
             case "keepThis":
-                set_tree_entry(iid, fileDB[size][hashval][filename], False)
+                search_del_flag_chg(fileDB[size][hashval][filename], False)
             case "copyPF":
                 root.clipboard_clear()
                 root.clipboard_append(filename)
-            case "copyP":
-                root.clipboard_clear()
-                root.clipboard_append(os.path.dirname(filename))
             case "copyF":
                 root.clipboard_clear()
                 root.clipboard_append(os.path.basename(filename))
+            case "copyP":
+                root.clipboard_clear()
+                root.clipboard_append(os.path.dirname(filename))
             case "delete":
-                if search_delete_file_from_db(size, hashval, filename):
-                    tree.delete(tree.parent(iid))
-                else:
-                    tree.delete(iid)
+                delete_file(filename)
+                search_delete_file_from_DBs(size, hashval, filename)
 
     # Menu if right-click to CheckBox
     menu0 = tk.Menu(root, tearoff=0)
     menu0.add_command(label="Mark all other for deletion", command=lambda: menu_action("markOther"))
+    menu0.add_command(label="Invert current marking", command=lambda: menu_action("invertMarks"))
     menu0.add_command(label="Mark this file for deletion", command=lambda: menu_action("markThis"))
     menu0.add_command(label="Keep this file", command=lambda: menu_action("keepThis"))
     menu0.add_separator()
-    menu0.add_command(label="!Delete immediatly!", command=lambda: menu_action("delete"))    
+    menu0.add_command(label="!Delete immediatly!", command=lambda: menu_action("delete"))
     # Menu if right-click to path/file
     menu1 = tk.Menu(root, tearoff=0)
     menu1.add_command(label="Copy path/filename to clipboard", command=lambda: menu_action("copyPF"))
     menu1.add_command(label="Copy only path to clipboard", command=lambda: menu_action("copyP"))
     menu1.add_command(label="Copy only filename to clipboard", command=lambda: menu_action("copyF"))
     menu1.add_separator()
-    menu1.add_command(label="!Delete immediatly!", command=lambda: menu_action("delete"))    
-    
+    menu1.add_command(label="!Delete immediatly!", command=lambda: menu_action("delete"))
+
     # Helper function for normal/left clicks -> toggle del marker or pick for marking
     def on_click(event):
         global current_iid
-        
+
         iid = tree.identify_row(event.y)
         if not iid:   return
         col = tree.identify_column(event.x)
-        
+
         (size,hashval,filename) = iidDB.get(iid,(None,None,None))    # Give False if no such iid key
-        if not filename: return 
-        
+        if not filename: return
+
         if event.num == 1:                              # if left mouse button
             # if click to Checkbox then toggle state
             if col == "#0":
                 flag = not fileDB[size][hashval][filename].get()
-                set_tree_entry(iid, fileDB[size][hashval][filename], flag)
+                search_del_flag_chg(fileDB[size][hashval][filename], flag)
             else:       # if column "Name"
                 globals().__setitem__('lastSelectedFile', os.path.dirname(filename))
         elif event.num == 3:                            # if right mouse button
             current_iid = (iid,col)     # needed by menu_action
             #tree.selection_set(iid)     # mark this entry
-            if col == "#0":             # if click to column #0 
+            if col == "#0":             # if click to column #0
                 # show menu0 at mouse position
                 try:
                     menu0.tk_popup(event.x_root, event.y_root)
@@ -958,11 +930,10 @@ def search_update_tree( frame ):
                     menu1.tk_popup(event.x_root, event.y_root)
                 finally:
                     menu1.grab_release()
-            
 
-    tree.bind("<Button-1>", on_click)    
-    tree.bind("<Button-3>", on_click)    
-    
+    tree.bind("<Button-1>", on_click)
+    tree.bind("<Button-3>", on_click)
+
 
     # Walk over all sizes and re-build a new list
     if tkVars['SortGroupsBigFirst'].get():
@@ -986,11 +957,11 @@ def search_update_tree( frame ):
                 flag    = flagObj.get()
                 preBox  = boxChar[flag]
                 colTag  = "col1" if flag else "col0"
-                entry   = tree.insert(headL, tk.END, text=preBox, values=(filename), tags=(colTag,) )
+                iid     = tree.insert(headL, tk.END, text=preBox, values=(filename), tags=(colTag,) )
                 #entry.pack(side='left', fill='x', expand=True)
                 # save the entry at flag object to be able to change background color
-                flagObj.entry = entry
-                iidDB[entry] = (size,hashval,filename)
+                flagObj.entry = iid
+                iidDB[iid] = (size,hashval,filename)
 
 
 # Completely rebuild the file list with CheckBoxes in a scrollable frame
@@ -1015,12 +986,15 @@ def search_update():
 # A single entry in the DB will be deleted here. If last entry or if only one
 # entry left (which shall not be deleted), then remove hash entry, too. If this
 # was last hash, delete also size entry. The file itself will NOT be deleted here.
-def search_delete_file_from_db(size, hashval, filename):
-    global fileDB
+def search_delete_file_from_DBs(size, hashval, filename):
+    global fileDB, tree
     status_write( f"Delete from DB: {filename}" )
 
     # Now delete the entry for this file
+    iid  = fileDB[size][hashval][filename].entry
+    iidp = tree.parent(iid)
     del fileDB[size][hashval][filename]
+    tree.delete(iid)
 
     # if less than 2 files for this hash then delete the hash
     l = len(fileDB[size][hashval])
@@ -1034,29 +1008,15 @@ def search_delete_file_from_db(size, hashval, filename):
 
         # if 1 or 0 files with this hash, also delete hash entry
         del fileDB[size][hashval]
+        tree.delete(iidp)
 
         # if no more file hashs for this size, delete size entry
         if len(fileDB[size]) == 0:
             del fileDB[size]
-            
+
         return True                       # Indicate that also hash was deleted
-    
+
     return False                          # Indicate that only file was deleted
-
-# if little 'del' button was pressed to delete a file directly, do it here
-def search_delete_direct(size, hashval, filename, linewidget, hashwidget):
-    global fileDB
-    status_write( f"Delete direct: {filename}" )
-    # Delete the file
-    delete_file(filename)
-
-    # Delete the entry in the data base, remove full branch if less than 2 files
-    # returns False if only the file was deleted, returns True if hash, too
-    # if !(size in fileDB) or !(hashval in fileDB[size]):
-    if search_delete_file_from_db(size, hashval, filename):
-        hashwidget.destroy()
-    else:
-        linewidget.destroy()
 
 # Walk through the whole DB and delete all files marked for to be deleted
 # In a 2nd run delete then all DB entries where file was deleted before
@@ -1077,20 +1037,18 @@ def search_delete_marked():
                 delFlag = hash_db[filename].get()
                 #print(f'{filename} : {delFlag}')
                 if delFlag :
-                    status_write( f"Delete marked: {filename}" )
                     delete_file(filename)
                     folder = os.path.dirname(filename)
                     if is_dir_empty(folder):
-                        status_write( f"Delete empty folder: {folder}" )
                         delete_empty_folder(folder)
                     toDeleteInDB.append((size, hashval, filename))
 
     # Now really delete the DB entries to be deleted, do it here to not screw up the loops above
     for size, hashval, filename in toDeleteInDB:
-        search_delete_file_from_db(size, hashval, filename)
+        search_delete_file_from_DBs(size, hashval, filename)
 
     # Update the displayed list of duplicate files
-    search_update()
+    #search_update()
 
 # Debug function to print the content of the DB to console
 def search_show():
@@ -1182,10 +1140,13 @@ def wmake_search( tab ):
 # ------------------------------------------------------------------------------
 # Mark to delete ---------------------------------------------------------------
 
+def mark_no_files(db, s, flagNot, flagIgCa):
+    for k in db:
+        search_del_flag_chg( db[k], flagNot )
+
 def mark_length_name(db, s, flagNot, flagIgCa):
     # 1) get unique lengths in descending order
     L = sorted({len(os.path.basename(k)) for k in db}, reverse=flagNot)
-    #L = sorted({len(k) for k in d1}, reverse=True)
     # 2) give each key its own list
     d2 = {length: [] for length in L}
     # 3) append each original key to the right bucket
@@ -1194,9 +1155,7 @@ def mark_length_name(db, s, flagNot, flagIgCa):
     flag = False
     for l in d2:
         for k in d2[l]:
-            # db[k].set(flag)
             search_del_flag_chg( db[k], flag )
-            # print(f'{flag} : {k}')
             flag = True
 
 # ---------------------------------------
@@ -1207,9 +1166,7 @@ def mark_length_path(db, s, flagNot, flagIgCa):
     flag = False
     for l in d2:
         for k in d2[l]:
-            # db[k].set(flag)
             search_del_flag_chg( db[k], flag )
-            # print(f'{flag} : {k}')
             flag = True
 
 # ---------------------------------------
@@ -1217,9 +1174,7 @@ def mark_alpha_path(db, s, flagNot, flagIgCa):
     d2 = sorted({k for k in db}, reverse=flagNot)
     flag = False
     for k in d2:
-        # db[k].set(flag)
         search_del_flag_chg( db[k], flag )
-        # print(f'{flag} : {k}')
         flag = True
 
 # ---------------------------------------
@@ -1231,7 +1186,6 @@ def mark_on_path(db, s, flagNot, flagIgCa):
     if flag == 3:
         for k in db:
             flag = flagNot  if k.startswith(s.get())  else  not flagNot
-            # db[k].set(flag)
             search_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
@@ -1247,7 +1201,6 @@ def mark_one_word_file(db, s, flagNot, flagIgCa):
         for k in db:
             x = os.path.basename(k).lower()  if flagIgCa  else  os.path.basename(k)
             flag = flagNot  if any(w in x for w in words) else  not flagNot
-            # db[k].set(flag)
             search_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
@@ -1263,7 +1216,6 @@ def mark_all_words_file(db, s, flagNot, flagIgCa):
         for k in db:
             x = os.path.basename(k).lower()  if flagIgCa  else  os.path.basename(k)
             flag = flagNot  if all(w in x for w in words) else  not flagNot
-            # db[k].set(flag)
             search_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
@@ -1279,7 +1231,6 @@ def mark_one_word_path(db, s, flagNot, flagIgCa):
         for k in db:
             x = os.path.dirname(k).lower()  if flagIgCa  else  os.path.dirname(k)
             flag = flagNot  if any(w in x for w in words) else  not flagNot
-            # db[k].set(flag)
             search_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
@@ -1295,7 +1246,6 @@ def mark_all_words_path(db, s, flagNot, flagIgCa):
         for k in db:
             x = os.path.dirname(k).lower()  if flagIgCa  else  os.path.dirname(k)
             flag = flagNot  if all(w in x for w in words) else  not flagNot
-            # db[k].set(flag)
             search_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
@@ -1311,7 +1261,6 @@ def mark_one_word_pafi(db, s, flagNot, flagIgCa):
         for k in db:
             x = k.lower()  if flagIgCa  else  k
             flag = flagNot  if any(w in x for w in words) else  not flagNot
-            # db[k].set(flag)
             search_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
@@ -1327,7 +1276,6 @@ def mark_all_words_pafi(db, s, flagNot, flagIgCa):
         for k in db:
             x = k.lower()  if flagIgCa  else  k
             flag = flagNot  if all(w in x for w in words) else  not flagNot
-            # db[k].set(flag)
             search_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
@@ -1351,11 +1299,11 @@ def mark_strings_extract():
 def mark_strings_restore( svs, values ):
     for sv, val in zip(svs, values):
         sv.set(val)
-        #print(f'{sv} - {val}')
 
 def wmake_mark( tab ):
     #    Function to call    , Text to show                                    , strVar, colors     , pick path
     markOptions=(
+        [mark_no_files       , "Keep ALL files (reset list)"                   , None ],
         [mark_length_name    , "Keep file with SHORTEST FILENAME"              , None ],
         [mark_length_path    , "Keep file with SHORTEST PATHNAME"              , None ],
         [mark_on_path        , "Keep file which is in this PATH:"              , None, colorBlock[0], "pick" ],
