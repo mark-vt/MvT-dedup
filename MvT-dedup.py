@@ -10,8 +10,10 @@ import time
 import shlex
 import atexit
 import datetime
+import subprocess
 from   blake3 import blake3
 from   send2trash import send2trash
+from   PIL import Image, ImageTk, UnidentifiedImageError   # Pillow, for images
 
 # Includes for GUI stuff
 import tkinter as tk
@@ -22,7 +24,7 @@ from   tkinter import filedialog
 # ------------------------------------------------------------------------------
 # Global Variables -------------------------------------------------------------
 
-version = '1.02'
+version = '1.03'
 
 searchFileCnt = 0;
 
@@ -73,13 +75,172 @@ scriptPathFile = os.path.splitext(os.path.basename(scriptPathFileExt))[0]
 fileNameInit = f'{scriptPathFile}.ini'
 # filename of file/groups database
 fileNameData = f'{scriptPathFile}.dat'
+# Files with these extensions will be handled as video
+extensionMovie = '".mp4" ".mpg" ".mpeg" ".avi" ".mkv" ".flv" ".wmv"'
 
 # ------------------------------------------------------------------------------
 # helper -----------------------------------------------------------------------
 
+# Run command and return output ------------------
+
+def run_cmd(cmd):
+    """Run command and return stdout as string, raise on error."""
+    # cmd kann Liste oder String sein
+    if isinstance(cmd, str):
+        cmd = shlex.split(cmd)
+    result = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+# Creating preview picture -----------------------
+
+def video_get_duration(video_path):
+    """Duration (Seconds, float) per ffprobe."""
+    cmd = [ "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", str(video_path), ]
+    out = run_cmd(cmd)
+    try: 
+        ret = float(out)
+    except:
+        ret = None
+    return ret
+
+def video_get_fps_float(video_path):
+    """FPS as float from r_frame_rate (e.g. '25/1', '30000/1001')."""
+    cmd = [ "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", 
+            "stream=r_frame_rate", "-of", "default=noprint_wrappers=1:nokey=1",    
+            str(video_path), ]
+    rate_str = run_cmd(cmd)           # z.B. "25/1" oder "30000/1001"
+    num, den = rate_str.split("/")
+    try:
+        num = float(num)
+    except:
+        return None
+    if not num:
+        return None
+        
+    den = float(den) if float(den) != 0 else 1.0
+    return num / den
+
+def video_create_preview_grid( video_path, out_path="video_preview_file.jpg", cols=3, rows=3, width=320):
+    # 1) get duration
+    duration = video_get_duration(video_path)
+    if not duration:   return None
+
+    # 2) get frames/s as float
+    fps = video_get_fps_float(video_path)
+    if not fps:   return None
+
+    # 3) calculate the number of frames for one interval
+    total_frames = int(duration * fps)
+    intervals = cols * rows + 1      # e.g. "10" at 3x3 = 9 Samples
+    step = max(total_frames // intervals, 1)
+
+    print(f"DURATION={duration}, FPS={fps}, TOTAL_FRAMES={total_frames}, STEP={step}")
+
+    # 4) ffmpeg parameters
+    vf_expr = f"select='not(mod(n,{step}))',scale={tkVars['PrvwMosS'].get()}" + \
+              f":-1,tile={tkVars['PrvwMosX'].get()}x{tkVars['PrvwMosY'].get()}"
+    cmd = [ "ffmpeg", "-y", "-i", str(video_path), "-vf", vf_expr, "-frames:v", "1", str(out_path), ]
+    # call ffmpeg
+    result = subprocess.run(cmd, check=True)
+
+
+    return out_path
+    
+def is_probably_picture_file(pathfile):
+    try:
+        with Image.open(pathfile) as img:
+            img.verify()  # prüft grob die Integrität
+        return True
+    except (UnidentifiedImageError, OSError):
+        return False    
+        
+def is_probably_text_file(path, blocksize=1024):
+    """
+    Heuristic: True, if file is text, otherwise False
+    """
+    try:
+        with open(path, "rb") as f:
+            chunk = f.read(blocksize)
+    except OSError:
+        return False  
+
+    if not chunk:
+        # empty file -> ignore
+        return False
+
+    # If 0x00 byte inside then probably no text
+    if b"\x00" in chunk:
+        return False
+
+    # if decodable as UTF-8 then might be text
+    try:
+        chunk.decode("utf-8")
+        return True
+    except UnicodeDecodeError:
+        return False
+
+def image_show_in_window(image_path, delFlg):  # PILLOW version for image output
+    global root                                # supports more image formats
+    
+    win = tk.Toplevel(root)
+    win.title(image_path)
+    # Load picture with PILLOW
+    img = Image.open(image_path)
+    photo = ImageTk.PhotoImage(img)
+    label = ttk.Label(win, image=photo)
+    label.image = photo  # Referenz halten!
+    label.pack(fill="both", expand=True)
+    
+    def on_close():
+        # delete the file
+        try:
+            if os.path.exists(image_path):
+                os.remove(image_path)
+        except OSError as e:
+            print("Could not delete preview file:", e)
+
+        # destroy the window
+        win.destroy()
+
+    # hook close button (X) to our handler
+    if delFlg:
+        win.protocol("WM_DELETE_WINDOW", on_close)    
+
+def show_preview_win( pathfile :str ):
+    delFlag = False
+    s = tkVars['PrvwMosFilm'].get()
+    mov_ext_list = [part.strip('"') for part in s.split()]
+    
+    pureFile, pureExt = os.path.splitext(pathfile)  # [0]=pathfile, [1]=ext
+
+    if is_probably_picture_file( pathfile ):        # if image, display it
+        image_show_in_window( pathfile, delFlag )
+    elif pureExt in mov_ext_list:                   # if video, create preview image and display it
+        ext = tkVars['PrvwMosT'].get()
+        outFile = f'{pureFile}.{ext}'
+        if not os.path.exists(outFile):             # if no preview file of this type exists
+            if not video_create_preview_grid(pathfile, outFile):   # Create a preview file
+                print("Seems not to be a valid video:", pathfile)
+                return 
+            if tkVars['DelPreviewOnClose'].get(): 
+                delFlag = True
+                
+        image_show_in_window( outFile, delFlag )
+    elif is_probably_text_file(pathfile):
+        print("Text file!")
+    else:
+        print("File format not supported!")
+
 # File system operations -------------------------
 
-def delete_file( pathfile ):
+def delete_file( pathfile :str ):
     if tkVars['DeleteToTrash'].get():
         send2trash(pathfile)
         status_write(f"File {pathfile} moved to trash!")
@@ -87,7 +248,7 @@ def delete_file( pathfile ):
         os.remove(pathfile)
         status_write(f"File {pathfile} deleted!")
 
-def delete_empty_folder(folder):
+def delete_empty_folder(folder :str):
     global initData
     if tkVars['DelEmptyFolder'].get():
         if tkVars['DeleteToTrash'].get():
@@ -97,7 +258,7 @@ def delete_empty_folder(folder):
             os.rmdir(folder)
             status_write(f"Empty folder {folder} deleted!")
 
-def is_dir_empty(path: str) -> bool:
+def is_dir_empty(path :str) -> bool:
     # os.scandir returns an iterator of DirEntry objects.
     # next(..., None) yields the first entry or None if empty.
     return next(os.scandir(path), None) is None
@@ -117,8 +278,6 @@ def tk_variables_register_and_init(key, typ):
         value = ''
     else:
         value = 0
-
-    #print(f'key:{key} : typ:{typ} : value:{value}')
 
     initData[key] = value
 
@@ -257,6 +416,12 @@ def init_data_load():
                         'UseFastHash'       : True,
                         'HashBlkSize'       : "17",
                         'HashBlkNum'        : "11",
+                        'DelPreviewOnClose' : True,
+                        'PrvwMosX'          : "4",
+                        'PrvwMosY'          : "3",
+                        'PrvwMosS'          : "320",
+                        'PrvwMosT'          : "jpg",
+                        'PrvwMosFilm'       : extensionMovie
                       }
 
     if os.path.exists(fileNameInit):
@@ -796,7 +961,8 @@ def search_cleanup():
             else:                           # valid hash_db
                 for f in hash_db:           # translate all 'bool' to 'tk.BooleanVar'
                     b = hash_db[f]          # this is needed for save/restore fileDB
-                    hash_db[f] = tk.BooleanVar(value=b)  # no 'tk.BooleanVar' in JSON
+                    if isinstance(b, bool):
+                        hash_db[f] = tk.BooleanVar(value=b)  # no 'tk.BooleanVar' in JSON
 
         # if we have no hash element in this size entry anymore then delete this size entry
         grps = len(fileDB[size])
@@ -915,6 +1081,7 @@ def search_update_tree( frame ):
                 search_del_flag_chg(fileDB[size][hashval][filename], flag)
             else:       # if column "Name"
                 globals().__setitem__('lastSelectedFile', os.path.dirname(filename))
+                #print("LAST:", lastSelectedFile)
         elif event.num == 3:                            # if right mouse button
             current_iid = (iid,col)     # needed by menu_action
             #tree.selection_set(iid)     # mark this entry
@@ -931,10 +1098,22 @@ def search_update_tree( frame ):
                 finally:
                     menu1.grab_release()
 
+    def on_double_click(event):
+        global current_iid
+
+        iid = tree.identify_row(event.y)
+        if not iid:   return
+        col = tree.identify_column(event.x)
+
+        (size,hashval,filename) = iidDB.get(iid,(None,None,None))    # Give False if no such iid key
+        if not filename: return      
+
+        show_preview_win( filename )
+
     tree.bind("<Button-1>", on_click)
     tree.bind("<Button-3>", on_click)
-
-
+    tree.bind("<Double-Button-1>", on_double_click)
+    
     # Walk over all sizes and re-build a new list
     if tkVars['SortGroupsBigFirst'].get():
         sizelist = sorted(fileDB, reverse=True )
@@ -1301,6 +1480,8 @@ def mark_strings_restore( svs, values ):
         sv.set(val)
 
 def wmake_mark( tab ):
+    global lastSelectedFile
+
     #    Function to call    , Text to show                                    , strVar, colors     , pick path
     markOptions=(
         [mark_no_files       , "Keep ALL files (reset list)"                   , None ],
@@ -1358,51 +1539,134 @@ def wmake_settings( tab ):
 
     chkbDelEmpFold   = tk_variables_register_and_init('DelEmptyFolder'    , 'bool')
     chkbDel2Trash    = tk_variables_register_and_init('DeleteToTrash'     , 'bool')
-    chkbShowFileRight= tk_variables_register_and_init('ShowFilesRight'    , 'bool')
+    # chkbShowFileRight= tk_variables_register_and_init('ShowFilesRight'    , 'bool')
     chkbGrpSortBig1st= tk_variables_register_and_init('SortGroupsBigFirst', 'bool')
     chkbSaveMarkTxt  = tk_variables_register_and_init('SaveMarkTexts'     , 'bool')
     chkbSaveFileDB   = tk_variables_register_and_init('SaveFileDB'        , 'bool')
-    chkbUseFastHash  = tk_variables_register_and_init('UseFastHash'       , 'bool')
-    blockSize        = tk_variables_register_and_init('HashBlkSize'       , 'string')
-    blockSizeHR      = tk_variables_register_and_init('HashBlkSizeHR'     , 'string')
-    blockNum         = tk_variables_register_and_init('HashBlkNum'        , 'string')
-    blockTotal       = tk_variables_register_and_init('HashBlkTotal'      , 'string')
+    chkbDelPreview   = tk_variables_register_and_init('DelPreviewOnClose' , 'bool')
+    
+    chkbUseFastHash  = tk_variables_register_and_init('UseFastHash'        , 'bool')
+    chkbUseFastHashFull = tk_variables_register_and_init('UseFastHashFull' , 'bool')
+    blockSize        = tk_variables_register_and_init('HashBlkSize'    , 'string')
+    blockSizeHR      = tk_variables_register_and_init('HashBlkSizeHR'  , 'string')
+    blockNum         = tk_variables_register_and_init('HashBlkNum'     , 'string')
+    blockTotal       = tk_variables_register_and_init('HashBlkTotal'   , 'string')
 
-    tk.Checkbutton(tab, text="Delete folder if they become empty by file removement",
+    previewMosaicX   = tk_variables_register_and_init('PrvwMosX'       , 'string')
+    previewMosaicY   = tk_variables_register_and_init('PrvwMosY'       , 'string')
+    previewMosaicSize= tk_variables_register_and_init('PrvwMosS'       , 'string')
+    previewMosaicInfo= tk_variables_register_and_init('PrvwMosI'       , 'string')
+    previewMosaicType= tk_variables_register_and_init('PrvwMosT'       , 'string')
+    previewMosaicFilm= tk_variables_register_and_init('PrvwMosFilm'    , 'string')
+    
+    # Create a scrollable frame to hold all the settings
+    sf = ScrollableFrame( tab )
+    sf.pack(fill='both', pady=(0,0), expand=True)
+    sfSettings = sf.scrollable_frame    
+
+    tk.Checkbutton(sfSettings, text="Delete folder if they become empty by file removement",
         variable=chkbDelEmpFold ).pack(anchor="w", side='top', pady=(16,16) )
 
-    tk.Checkbutton(tab, text="Delete to TRASH instead of real deletion",
+    tk.Checkbutton(sfSettings, text="Delete to TRASH instead of real deletion",
         variable=chkbDel2Trash ).pack(anchor="w", side='top', pady=(0,16) )
 
-    tk.Checkbutton(tab, text="Show long filenames by shifting right",
-        variable=chkbShowFileRight ).pack(anchor="w", side='top', pady=(0,16) )
+    #tk.Checkbutton(sfSettings, text="Show long filenames by shifting right",
+    #    variable=chkbShowFileRight ).pack(anchor="w", side='top', pady=(0,16) )
 
-    tk.Checkbutton(tab, text="Sort groups with biggest file size first",
+    tk.Checkbutton(sfSettings, text="Sort groups with biggest file size first",
         variable=chkbGrpSortBig1st ).pack(anchor="w", side='top', pady=(0,16) )
 
-    tk.Checkbutton(tab, text="Save settings from the MARK tab at program's end",
+    tk.Checkbutton(sfSettings, text="Save settings from the MARK tab at program's end",
         variable=chkbSaveMarkTxt ).pack(anchor="w", side='top', pady=(0,16) )
 
-    tk.Checkbutton(tab, text="Store file database at program's end to continue on next start without new 'search'",
-        variable=chkbSaveFileDB ).pack(anchor="w", side='top', pady=(0,16) )
+    tk.Checkbutton(sfSettings, text="Store file database at program's end to continue on next start without new 'search' (click 'Restore list')",
+        variable=chkbSaveFileDB ).pack(anchor="w", side='top', pady=(0,8) )
+        
+    # Create a frame for the PREVIEW - - - - - - - - - - - - - - - - - - - - - -
+    
+    # helper function to calc fast hash parameters
+    def mosaicUpdate():
+        mi = "= Images: " + str(int(previewMosaicX.get()) * int(previewMosaicY.get())) + \
+             ",  Total width: " + str(int(previewMosaicX.get()) * int(previewMosaicSize.get()))
+        previewMosaicInfo.set(mi) 
+        
+    previewFrame = ttk.Frame( sfSettings )
+    previewFrame.pack(anchor="w", side='top', fill="x", padx=(4,8), pady=4)
+    previewFrame['borderwidth'] = 2
+    previewFrame['relief'] = 'ridge'
+    
+    label = tk.Label(previewFrame, text="Video preview:")
+    label.pack(anchor="n", side='top', padx=(4,0), pady=0)
+    
+    tk.Checkbutton(previewFrame, text="Delete generated video preview file if preview window closed",
+        variable=chkbDelPreview ).pack(anchor="w", side='top', pady=4 )
+        
+    label = tk.Label(previewFrame, text="Handle all files with these extensions as VIDEOs:")
+    label.pack(anchor="w", side='top', padx=8, pady=0)
+    
+    tk.Entry(previewFrame, textvariable=previewMosaicFilm, 
+             font='TkFixedFont' ).pack(side='top', padx=(12,8), fill='x', expand=True)        
+        
+    label = tk.Label(previewFrame, text="Select file type for video preview files:")
+    label.pack(anchor="w", side='top', padx=8, pady=(8,0) )
+    
+    ttk.Radiobutton(previewFrame, text='*.png file type for preview', value='png', variable=previewMosaicType).pack(side='top', fill='x', padx=24, pady=0)
+    ttk.Radiobutton(previewFrame, text='*.jpg file type for preview', value='jpg', variable=previewMosaicType).pack(side='top', fill='x', padx=24, pady=(0,4) )
+        
+    label = tk.Label(previewFrame, text="Mosaic pattern:  columns(X):")
+    label.pack(anchor="w", side='left', padx=(8,0), pady=(0,5))
+    
+    spinbox = tk.Spinbox( previewFrame, from_=1, to=10, wrap=True, width=3,
+                          textvariable=previewMosaicX, command=mosaicUpdate )
+    spinbox.pack(anchor="w", side='left', padx=0, pady=(0,5))
 
-    # Create a frame for the fast hash options
+    label = tk.Label(previewFrame, text=" rows(Y):")
+    label.pack(anchor="w", side='left', padx=(0,0), pady=(0,5))
+
+    spinbox = tk.Spinbox( previewFrame, from_=1, to=10, wrap=True, width=3,
+                          textvariable=previewMosaicY, command=mosaicUpdate )
+    spinbox.pack(anchor="w", side='left', padx=0, pady=(0,5))
+
+    label = tk.Label(previewFrame, text="Image width:")
+    label.pack(anchor="w", side='left', padx=(16,0), pady=(0,5))
+
+    spinbox = tk.Spinbox( previewFrame, from_=128, to=1024, wrap=True, width=3, increment=32,
+                          textvariable=previewMosaicSize, command=mosaicUpdate )
+    spinbox.pack(anchor="w", side='left', padx=(2,5), pady=(0,5))
+
+    label = tk.Label(previewFrame, textvariable=previewMosaicInfo)
+    label.pack(anchor="w", side='left', padx=(8,0), pady=(0,5))    
+    
+    mosaicUpdate()
+
+    # Create a frame for FAST HASH - - - - - - - - - - - - - - - - - - - - - - -
+
+    # helper function to calc fast hash parameters 
     def blockUpdate():
         bs = "(" + humread(1 << (int(blockSize.get()))) + ")"
         bt = " = " + humread(int(blockNum.get()) << (int(blockSize.get())))
         blockSizeHR.set(bs)
         blockTotal.set(bt)
 
-    fastHashFrame = ttk.Frame( tab )
-    fastHashFrame.pack(anchor="w", side='top', fill="x")
+    # Create a frame for the fast hash options
+    fastHashFrame = ttk.Frame( sfSettings )
+    fastHashFrame.pack(anchor="w", side='top', fill="x", padx=(4,8), pady=4)
+    fastHashFrame['borderwidth'] = 2
+    fastHashFrame['relief'] = 'ridge'
+
+    label = tk.Label(fastHashFrame, text="Fast hash (compare files):")
+    label.pack(anchor="n", side='top', padx=(4,0), pady=0)
+    
+    tk.Checkbutton(fastHashFrame, text="Very safe mode: calculate also FULL hash if fast hash says 'equal' (makes only sense with ☑ below)",
+        variable=chkbUseFastHashFull ).pack(anchor="w", side='top', pady=(4,0) )
 
     tk.Checkbutton(fastHashFrame, text="Use fast file hashing for big files",
-        variable=chkbUseFastHash ).pack(anchor="w", side='left', pady=(10,5) )
+        variable=chkbUseFastHash ).pack(anchor="w", side='left', pady=(4,4) )
 
     label = tk.Label(fastHashFrame, text="Block: 2^")
     label.pack(anchor="w", side='left', padx=(25,0), pady=(10,5), fill="x")
 
-    spinbox = tk.Spinbox( fastHashFrame, from_= 9, to=30, wrap=True, width=3,
+    spinbox = tk.Spinbox( fastHashFrame, from_=9, to=30, wrap=True, width=3,
                           textvariable=blockSize, command=blockUpdate )
     spinbox.pack(anchor="w", side='left', pady=(10,5), padx=(2,5))
 
