@@ -104,7 +104,7 @@ def video_get_duration(video_path):
     cmd = [ "ffprobe", "-v", "error", "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1", str(video_path), ]
     out = run_cmd(cmd)
-    try: 
+    try:
         ret = float(out)
     except:
         ret = None
@@ -112,8 +112,8 @@ def video_get_duration(video_path):
 
 def video_get_fps_float(video_path):
     """FPS as float from r_frame_rate (e.g. '25/1', '30000/1001')."""
-    cmd = [ "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", 
-            "stream=r_frame_rate", "-of", "default=noprint_wrappers=1:nokey=1",    
+    cmd = [ "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+            "stream=r_frame_rate", "-of", "default=noprint_wrappers=1:nokey=1",
             str(video_path), ]
     rate_str = run_cmd(cmd)           # z.B. "25/1" oder "30000/1001"
     num, den = rate_str.split("/")
@@ -123,11 +123,11 @@ def video_get_fps_float(video_path):
         return None
     if not num:
         return None
-        
+
     den = float(den) if float(den) != 0 else 1.0
     return num / den
 
-def video_create_preview_grid( video_path, out_path="video_preview_file.jpg", cols=3, rows=3, width=320):
+def video_create_preview_grid( video_path, out_path="video_preview_file.jpg"):
     # 1) get duration
     duration = video_get_duration(video_path)
     if not duration:   return None
@@ -136,31 +136,35 @@ def video_create_preview_grid( video_path, out_path="video_preview_file.jpg", co
     fps = video_get_fps_float(video_path)
     if not fps:   return None
 
+    cols  = int( tkVars['PrvwMosX'].get() )
+    rows  = int( tkVars['PrvwMosY'].get() )
+    width = int( tkVars['PrvwMosS'].get() )
+
     # 3) calculate the number of frames for one interval
     total_frames = int(duration * fps)
     intervals = cols * rows + 1      # e.g. "10" at 3x3 = 9 Samples
     step = max(total_frames // intervals, 1)
 
-    print(f"DURATION={duration}, FPS={fps}, TOTAL_FRAMES={total_frames}, STEP={step}")
+    print(f"DURATION={duration}, FPS={fps}, TOTAL_FRAMES={total_frames}, STEP={step}, Intervals={intervals}")
 
     # 4) ffmpeg parameters
-    vf_expr = f"select='not(mod(n,{step}))',scale={tkVars['PrvwMosS'].get()}" + \
-              f":-1,tile={tkVars['PrvwMosX'].get()}x{tkVars['PrvwMosY'].get()}"
-    cmd = [ "ffmpeg", "-y", "-i", str(video_path), "-vf", vf_expr, "-frames:v", "1", str(out_path), ]
+    vf_expr = f"select='not(mod(n,{step}))',scale={width}:-1,tile={cols}x{rows}"
+    cmd = [ "ffmpeg", "-loglevel", "error", "-y", "-i", str(video_path),
+            "-vf", vf_expr, "-frames:v", "1", str(out_path), ]
     # call ffmpeg
     result = subprocess.run(cmd, check=True)
 
 
     return out_path
-    
+
 def is_probably_picture_file(pathfile):
     try:
         with Image.open(pathfile) as img:
             img.verify()  # prüft grob die Integrität
         return True
     except (UnidentifiedImageError, OSError):
-        return False    
-        
+        return False
+
 def is_probably_text_file(path, blocksize=1024):
     """
     Heuristic: True, if file is text, otherwise False
@@ -169,7 +173,7 @@ def is_probably_text_file(path, blocksize=1024):
         with open(path, "rb") as f:
             chunk = f.read(blocksize)
     except OSError:
-        return False  
+        return False
 
     if not chunk:
         # empty file -> ignore
@@ -188,7 +192,7 @@ def is_probably_text_file(path, blocksize=1024):
 
 def image_show_in_window(image_path, delFlg):  # PILLOW version for image output
     global root                                # supports more image formats
-    
+
     win = tk.Toplevel(root)
     win.title(image_path)
     # Load picture with PILLOW
@@ -197,7 +201,7 @@ def image_show_in_window(image_path, delFlg):  # PILLOW version for image output
     label = ttk.Label(win, image=photo)
     label.image = photo  # Referenz halten!
     label.pack(fill="both", expand=True)
-    
+
     def on_close():
         # delete the file
         try:
@@ -211,13 +215,13 @@ def image_show_in_window(image_path, delFlg):  # PILLOW version for image output
 
     # hook close button (X) to our handler
     if delFlg:
-        win.protocol("WM_DELETE_WINDOW", on_close)    
+        win.protocol("WM_DELETE_WINDOW", on_close)
 
 def show_preview_win( pathfile :str ):
     delFlag = False
     s = tkVars['PrvwMosFilm'].get()
     mov_ext_list = [part.strip('"') for part in s.split()]
-    
+
     pureFile, pureExt = os.path.splitext(pathfile)  # [0]=pathfile, [1]=ext
 
     if is_probably_picture_file( pathfile ):        # if image, display it
@@ -225,13 +229,15 @@ def show_preview_win( pathfile :str ):
     elif pureExt in mov_ext_list:                   # if video, create preview image and display it
         ext = tkVars['PrvwMosT'].get()
         outFile = f'{pureFile}.{ext}'
-        if not os.path.exists(outFile):             # if no preview file of this type exists
-            if not video_create_preview_grid(pathfile, outFile):   # Create a preview file
+        # if no preview file of this type exists
+        if not os.path.exists(outFile):
+            # Create a preview file
+            if not video_create_preview_grid(pathfile, outFile,):
                 print("Seems not to be a valid video:", pathfile)
-                return 
-            if tkVars['DelPreviewOnClose'].get(): 
+                return
+            if tkVars['DelPreviewOnClose'].get():
                 delFlag = True
-                
+
         image_show_in_window( outFile, delFlag )
     elif is_probably_text_file(pathfile):
         print("Text file!")
@@ -1002,6 +1008,7 @@ def search_update_tree( frame ):
     tree.column("#0", width=52, minwidth=52, stretch=False)
     tree.column("Name", width=3000, minwidth=400, stretch=True)
 
+    # Add scrollbars
     v_scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
     h_scrollbar = ttk.Scrollbar(frame, orient=tk.HORIZONTAL, command=tree.xview)
     tree.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
@@ -1106,14 +1113,14 @@ def search_update_tree( frame ):
         col = tree.identify_column(event.x)
 
         (size,hashval,filename) = iidDB.get(iid,(None,None,None))    # Give False if no such iid key
-        if not filename: return      
+        if not filename: return
 
         show_preview_win( filename )
 
     tree.bind("<Button-1>", on_click)
     tree.bind("<Button-3>", on_click)
     tree.bind("<Double-Button-1>", on_double_click)
-    
+
     # Walk over all sizes and re-build a new list
     if tkVars['SortGroupsBigFirst'].get():
         sizelist = sorted(fileDB, reverse=True )
@@ -1124,7 +1131,6 @@ def search_update_tree( frame ):
         size_db = fileDB[size]
         # Walk over all hashes and create a frame per hash with headline
         for hashval in size_db:
-
             hash_db = size_db[hashval]
             hashLen = len(hash_db)
             headline = humread( size ) + f' - {hashval}'
@@ -1136,7 +1142,7 @@ def search_update_tree( frame ):
                 flag    = flagObj.get()
                 preBox  = boxChar[flag]
                 colTag  = "col1" if flag else "col0"
-                iid     = tree.insert(headL, tk.END, text=preBox, values=(filename), tags=(colTag,) )
+                iid     = tree.insert(headL, tk.END, text=preBox, values=(filename,), tags=(colTag,) )
                 #entry.pack(side='left', fill='x', expand=True)
                 # save the entry at flag object to be able to change background color
                 flagObj.entry = iid
@@ -1544,7 +1550,7 @@ def wmake_settings( tab ):
     chkbSaveMarkTxt  = tk_variables_register_and_init('SaveMarkTexts'     , 'bool')
     chkbSaveFileDB   = tk_variables_register_and_init('SaveFileDB'        , 'bool')
     chkbDelPreview   = tk_variables_register_and_init('DelPreviewOnClose' , 'bool')
-    
+
     chkbUseFastHash  = tk_variables_register_and_init('UseFastHash'        , 'bool')
     chkbUseFastHashFull = tk_variables_register_and_init('UseFastHashFull' , 'bool')
     blockSize        = tk_variables_register_and_init('HashBlkSize'    , 'string')
@@ -1558,11 +1564,11 @@ def wmake_settings( tab ):
     previewMosaicInfo= tk_variables_register_and_init('PrvwMosI'       , 'string')
     previewMosaicType= tk_variables_register_and_init('PrvwMosT'       , 'string')
     previewMosaicFilm= tk_variables_register_and_init('PrvwMosFilm'    , 'string')
-    
+
     # Create a scrollable frame to hold all the settings
     sf = ScrollableFrame( tab )
     sf.pack(fill='both', pady=(0,0), expand=True)
-    sfSettings = sf.scrollable_frame    
+    sfSettings = sf.scrollable_frame
 
     tk.Checkbutton(sfSettings, text="Delete folder if they become empty by file removement",
         variable=chkbDelEmpFold ).pack(anchor="w", side='top', pady=(16,16) )
@@ -1581,41 +1587,41 @@ def wmake_settings( tab ):
 
     tk.Checkbutton(sfSettings, text="Store file database at program's end to continue on next start without new 'search' (click 'Restore list')",
         variable=chkbSaveFileDB ).pack(anchor="w", side='top', pady=(0,8) )
-        
+
     # Create a frame for the PREVIEW - - - - - - - - - - - - - - - - - - - - - -
-    
+
     # helper function to calc fast hash parameters
     def mosaicUpdate():
         mi = "= Images: " + str(int(previewMosaicX.get()) * int(previewMosaicY.get())) + \
              ",  Total width: " + str(int(previewMosaicX.get()) * int(previewMosaicSize.get()))
-        previewMosaicInfo.set(mi) 
-        
+        previewMosaicInfo.set(mi)
+
     previewFrame = ttk.Frame( sfSettings )
     previewFrame.pack(anchor="w", side='top', fill="x", padx=(4,8), pady=4)
     previewFrame['borderwidth'] = 2
     previewFrame['relief'] = 'ridge'
-    
+
     label = tk.Label(previewFrame, text="Video preview:")
     label.pack(anchor="n", side='top', padx=(4,0), pady=0)
-    
+
     tk.Checkbutton(previewFrame, text="Delete generated video preview file if preview window closed",
         variable=chkbDelPreview ).pack(anchor="w", side='top', pady=4 )
-        
+
     label = tk.Label(previewFrame, text="Handle all files with these extensions as VIDEOs:")
     label.pack(anchor="w", side='top', padx=8, pady=0)
-    
-    tk.Entry(previewFrame, textvariable=previewMosaicFilm, 
-             font='TkFixedFont' ).pack(side='top', padx=(12,8), fill='x', expand=True)        
-        
+
+    tk.Entry(previewFrame, textvariable=previewMosaicFilm,
+             font='TkFixedFont' ).pack(side='top', padx=(12,8), fill='x', expand=True)
+
     label = tk.Label(previewFrame, text="Select file type for video preview files:")
     label.pack(anchor="w", side='top', padx=8, pady=(8,0) )
-    
+
     ttk.Radiobutton(previewFrame, text='*.png file type for preview', value='png', variable=previewMosaicType).pack(side='top', fill='x', padx=24, pady=0)
     ttk.Radiobutton(previewFrame, text='*.jpg file type for preview', value='jpg', variable=previewMosaicType).pack(side='top', fill='x', padx=24, pady=(0,4) )
-        
+
     label = tk.Label(previewFrame, text="Mosaic pattern:  columns(X):")
     label.pack(anchor="w", side='left', padx=(8,0), pady=(0,5))
-    
+
     spinbox = tk.Spinbox( previewFrame, from_=1, to=10, wrap=True, width=3,
                           textvariable=previewMosaicX, command=mosaicUpdate )
     spinbox.pack(anchor="w", side='left', padx=0, pady=(0,5))
@@ -1635,13 +1641,13 @@ def wmake_settings( tab ):
     spinbox.pack(anchor="w", side='left', padx=(2,5), pady=(0,5))
 
     label = tk.Label(previewFrame, textvariable=previewMosaicInfo)
-    label.pack(anchor="w", side='left', padx=(8,0), pady=(0,5))    
-    
+    label.pack(anchor="w", side='left', padx=(8,0), pady=(0,5))
+
     mosaicUpdate()
 
     # Create a frame for FAST HASH - - - - - - - - - - - - - - - - - - - - - - -
 
-    # helper function to calc fast hash parameters 
+    # helper function to calc fast hash parameters
     def blockUpdate():
         bs = "(" + humread(1 << (int(blockSize.get()))) + ")"
         bt = " = " + humread(int(blockNum.get()) << (int(blockSize.get())))
@@ -1656,7 +1662,7 @@ def wmake_settings( tab ):
 
     label = tk.Label(fastHashFrame, text="Fast hash (compare files):")
     label.pack(anchor="n", side='top', padx=(4,0), pady=0)
-    
+
     tk.Checkbutton(fastHashFrame, text="Very safe mode: calculate also FULL hash if fast hash says 'equal' (makes only sense with ☑ below)",
         variable=chkbUseFastHashFull ).pack(anchor="w", side='top', pady=(4,0) )
 
