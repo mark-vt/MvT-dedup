@@ -20,6 +20,7 @@ import tkinter as tk
 from   tkinter import ttk
 from   tkinter.scrolledtext import ScrolledText
 from   tkinter import filedialog
+import tkinter.font as tkFont
 
 # ------------------------------------------------------------------------------
 # Global Variables -------------------------------------------------------------
@@ -83,79 +84,7 @@ extensionMovie = '".mp4" ".mpg" ".mpeg" ".avi" ".mkv" ".flv" ".wmv"'
 
 # Run command and return output ------------------
 
-def run_cmd(cmd):
-    """Run command and return stdout as string, raise on error."""
-    # cmd kann Liste oder String sein
-    if isinstance(cmd, str):
-        cmd = shlex.split(cmd)
-    result = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        check=True,
-    )
-    return result.stdout.strip()
-
-# Creating preview picture -----------------------
-
-def video_get_duration(video_path):
-    """Duration (Seconds, float) per ffprobe."""
-    cmd = [ "ffprobe", "-v", "error", "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1", str(video_path), ]
-    out = run_cmd(cmd)
-    try:
-        ret = float(out)
-    except:
-        ret = None
-    return ret
-
-def video_get_fps_float(video_path):
-    """FPS as float from r_frame_rate (e.g. '25/1', '30000/1001')."""
-    cmd = [ "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-            "stream=r_frame_rate", "-of", "default=noprint_wrappers=1:nokey=1",
-            str(video_path), ]
-    rate_str = run_cmd(cmd)           # z.B. "25/1" oder "30000/1001"
-    num, den = rate_str.split("/")
-    try:
-        num = float(num)
-    except:
-        return None
-    if not num:
-        return None
-
-    den = float(den) if float(den) != 0 else 1.0
-    return num / den
-
-def video_create_preview_grid( video_path, out_path="video_preview_file.jpg"):
-    # 1) get duration
-    duration = video_get_duration(video_path)
-    if not duration:   return None
-
-    # 2) get frames/s as float
-    fps = video_get_fps_float(video_path)
-    if not fps:   return None
-
-    cols  = int( tkVars['PrvwMosX'].get() )
-    rows  = int( tkVars['PrvwMosY'].get() )
-    width = int( tkVars['PrvwMosS'].get() )
-
-    # 3) calculate the number of frames for one interval
-    total_frames = int(duration * fps)
-    intervals = cols * rows + 1      # e.g. "10" at 3x3 = 9 Samples
-    step = max(total_frames // intervals, 1)
-
-    print(f"DURATION={duration}, FPS={fps}, TOTAL_FRAMES={total_frames}, STEP={step}, Intervals={intervals}")
-
-    # 4) ffmpeg parameters
-    vf_expr = f"select='not(mod(n,{step}))',scale={width}:-1,tile={cols}x{rows}"
-    cmd = [ "ffmpeg", "-loglevel", "error", "-y", "-i", str(video_path),
-            "-vf", vf_expr, "-frames:v", "1", str(out_path), ]
-    # call ffmpeg
-    result = subprocess.run(cmd, check=True)
-
-
-    return out_path
+from MvT_previewTiles import MvT_preview_tiles
 
 def is_probably_picture_file(pathfile):
     try:
@@ -232,7 +161,11 @@ def show_preview_win( pathfile :str ):
         # if no preview file of this type exists
         if not os.path.exists(outFile):
             # Create a preview file
-            if not video_create_preview_grid(pathfile, outFile,):
+            if not MvT_preview_tiles(pathfile,
+                                     int(tkVars['PrvwMosX'].get() ),
+                                     int(tkVars['PrvwMosY'].get() ),
+                                     int(tkVars['PrvwMosS'].get() ),
+                                     4, outFile):
                 print("Seems not to be a valid video:", pathfile)
                 return
             if tkVars['DelPreviewOnClose'].get():
@@ -1015,7 +948,14 @@ def search_update_tree( frame ):
     v_scrollbar.pack(side=tk.RIGHT, fill="y")
     h_scrollbar.pack(side=tk.BOTTOM, fill="x")
 
+    # Create the treeview
     tree.pack(side=tk.LEFT,fill=tk.BOTH, expand=True)
+
+    # Redefine the hights of the lines to not squeeze the fonts
+    style = ttk.Style()
+    style.theme_use("clam")
+    font = tkFont.nametofont("TkDefaultFont")
+    style.configure("Treeview", rowheight=font.metrics("linespace") + 4 )
 
     # define colors
     tree.tag_configure("col0", background=colorFile[0])
