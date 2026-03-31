@@ -4,6 +4,7 @@
 # But keep these files
 !Copyright.txt
 !License.md
+!README.md
 !MvT_dedup.py
 !MvT_previewTiles.py
 !.gitignore
