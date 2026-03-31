@@ -31,7 +31,6 @@ searchFileCnt = 0;
 
 # Save and restore settings, normal - default - from_tk_var
 initData = {}
-defaultInitData = {}
 tkVars = {}
 
 # hold the list of files with duplicates
@@ -205,12 +204,10 @@ def is_dir_empty(path :str) -> bool:
 # Save in INI file helpers -----------------------
 
 def tk_variables_register_and_init(key, typ):
-    global tkVars, initData, defaultInitData
+    global tkVars, initData
 
     if key in initData:
         value = initData[key]
-    elif key in defaultInitData:
-        value = defaultInitData[key]
     elif typ[0]=='b':
         value = False
     elif typ[0]=='s':
@@ -236,19 +233,7 @@ def tk_variables_get_to_save():
 
 # General ----------------------------------------
 
-# convert integers into human readable with full numbers only
-def humreadX( v ):
-    i = 0
-    x = 1 if v == 0 else v
-    p = ('B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB')
-    while(x):
-        x >>= 10
-        i+=1
-    i-=1
-    v >>= (10 * i)
-    return f'{v} {p[i]}'
-
-# convert integers into human readable with at least 3 valid numbers (with dot)
+# convert integers into human readable with at least 3 valid digits (with dot), hex-based, not decimal based
 def humread(n: int) -> str:
     import math
 
@@ -333,55 +318,50 @@ def on_exit():
 # Basic information from *.ini file
 
 def init_data_load():
-    global initData, defaultInitData, searchFolders, searchFolderLast, fileNameInit
-
-    # Read stored ini data from this file
-    # fileNameInit = os.path.join(os.path.expanduser('~'), f'{__file__}.ini')
+    global initData, searchFolders, searchFolderLast, fileNameInit
 
     # If no such file or failed, use this for initialization
-    defaultInitData = { 'Version' : version,
-                        'winSizeX':840, 'winSizeY':600,
-                        'winPosX' :100, 'winPosY' :100,
-                        'DelEmptyFolder'    : True ,
-                        'DeleteToTrash'     : False ,
-                        'SaveMarkTexts'     : True ,
-                        'SaveFileDB'        : False,
-                        'SearchFoldLast'    : searchFolderLast,
-                        'SearchFolders'     : { os.path.expanduser('~') : 1 },
-                        'DelEmptyFolder'    : True,
-                        'SaveMarkTexts'     : True,
-                        'ShowFilesRight'    : True,
-                        'SortGroupsBigFirst': True,
-                        'UseFastHash'       : True,
-                        'HashBlkSize'       : "17",
-                        'HashBlkNum'        : "11",
-                        'DelPreviewOnClose' : True,
-                        'PrvwMosX'          : "4",
-                        'PrvwMosY'          : "3",
-                        'PrvwMosS'          : "320",
-                        'PrvwMosT'          : "jpg",
-                        'PrvwMosFilm'       : extensionMovie
-                      }
+    initData = { 'Version'           : version,
+                 'winSizeX'           :840, 'winSizeY': 600,
+                 'winPosX'           : 100, 'winPosY' : 100,
+                 'DelEmptyFolder'    : True ,
+                 'DeleteToTrash'     : False ,
+                 'SaveMarkTexts'     : True ,
+                 'SaveFileDB'        : False,
+                 'SearchFolders'     : { os.path.expanduser('~') : 1 },
+                 'SearchFoldLast'    : searchFolderLast,
+                 'DelEmptyFolder'    : True,
+                 'SaveMarkTexts'     : True,
+                 'ShowFilesRight'    : True,
+                 'SortGroupsBigFirst': True,
+                 'UseFastHash'       : True,
+                 'HashBlkSize'       : "17",
+                 'HashBlkNum'        : "11",
+                 'DelPreviewOnClose' : True,
+                 'PrvwMosX'          : "4",
+                 'PrvwMosY'          : "3",
+                 'PrvwMosS'          : "320",
+                 'PrvwMosT'          : "jpg",
+                 'PrvwMosFilm'       : extensionMovie,
+                 'WinZoomFactor'     : 1.0
+               }
 
+    # Read stored ini data from file and overwrite defaults, if a file
     if os.path.exists(fileNameInit):
         with open(fileNameInit, "r", encoding="utf-8") as f:
             try:
-                initData = json.load(f)   # Reads file into a Python dict
+                loaded = json.load(f)           # Reads file into a Python dict
+                initData.update(loaded)         # new fields in file overwrite defaults
             except json.JSONDecodeError:
                 print(f"File '{fileNameInit}' contains invalid JSON. Please fix or delete file")
                 exit(2)
-
-        if not len( initData['SearchFolders'] ):
-            initData['SearchFolders'] = { os.path.expanduser('~') : 1 }
-    else:
-        initData = defaultInitData
 
     searchFolders    = initData['SearchFolders']
     searchFolderLast = initData['SearchFoldLast']
 
 
 # Check some data about windows geometry if it makes sense, root window needed!
-def init_data_check( root ):
+def init_win_geo_data_check( root ):
     global initData
     # Avoid that windows will initialy be placed outside the visible screen
     screenMaxX, screenMaxY = getScreenSize( root )
@@ -394,7 +374,8 @@ def init_data_check( root ):
     if (initData['winPosY'] + initData['winSizeY']) > screenMaxY:   initData['winPosY'] = screenMaxY - initData['winSizeX']
 
 # ------------------------------------------------------------------------------
-# menu ---------------------------------------------------------------------
+# menu bar ---------------------------------------------------------------------
+
 def wmake_menu( root ):
     menubar = tk.Menu(root)
     root.config(menu=menubar)
@@ -1219,6 +1200,12 @@ def search_restore():
         status_write(f'File/groups file not found: {fileNameData}')
 
 
+def search_clear():
+    global fileDB
+    fileDB.clear()
+    search_update()
+
+
 def wmake_search( tab ):
     # Create button frame
     butSearchFrame = ttk.Frame( tab )
@@ -1247,6 +1234,9 @@ def wmake_search( tab ):
     butSearchStart.pack(padx = 10, pady=5, side=tk.LEFT)
     # "Restore list" button
     butSearchStop = tk.Button( butSearchFrame, text='Restore list', command=search_restore, bg=colorButt[3] )
+    butSearchStop.pack(padx = 10, pady=5, side=tk.LEFT)
+    # "Clear list" button
+    butSearchStop = tk.Button( butSearchFrame, text='Clear list', command=search_clear, bg=colorButt[1] )
     butSearchStop.pack(padx = 10, pady=5, side=tk.LEFT)
 
     # Create scrollable frame for the duplicate groups
@@ -1430,7 +1420,7 @@ def wmake_mark( tab ):
 
     #    Function to call    , Text to show                                    , strVar, colors     , pick path
     markOptions=(
-        [mark_no_files       , "Keep ALL files (reset list)"                   , None ],
+        [mark_no_files       , "Keep ALL files (clear all check marks)"        , None ],
         [mark_length_name    , "Keep file with SHORTEST FILENAME"              , None ],
         [mark_length_path    , "Keep file with SHORTEST PATHNAME"              , None ],
         [mark_on_path        , "Keep file which is in this PATH:"              , None, colorBlock[0], "pick" ],
@@ -1481,7 +1471,7 @@ def wmake_mark( tab ):
 # Settings ---------------------------------------------------------------------
 
 def wmake_settings( tab ):
-    global initData
+    global initData, root
 
     chkbDelEmpFold   = tk_variables_register_and_init('DelEmptyFolder'    , 'bool')
     chkbDel2Trash    = tk_variables_register_and_init('DeleteToTrash'     , 'bool')
@@ -1490,13 +1480,15 @@ def wmake_settings( tab ):
     chkbSaveMarkTxt  = tk_variables_register_and_init('SaveMarkTexts'     , 'bool')
     chkbSaveFileDB   = tk_variables_register_and_init('SaveFileDB'        , 'bool')
     chkbDelPreview   = tk_variables_register_and_init('DelPreviewOnClose' , 'bool')
+    
+    slideWinZoom     = tk_variables_register_and_init('WinZoomFactor'     , 'double')
 
-    chkbUseFastHash  = tk_variables_register_and_init('UseFastHash'        , 'bool')
-    chkbUseFastHashFull = tk_variables_register_and_init('UseFastHashFull' , 'bool')
-    blockSize        = tk_variables_register_and_init('HashBlkSize'    , 'string')
-    blockSizeHR      = tk_variables_register_and_init('HashBlkSizeHR'  , 'string')
-    blockNum         = tk_variables_register_and_init('HashBlkNum'     , 'string')
-    blockTotal       = tk_variables_register_and_init('HashBlkTotal'   , 'string')
+    chkbUseFastHash  = tk_variables_register_and_init('UseFastHash'       , 'bool')
+    chkbUseFastHashFull = tk_variables_register_and_init('UseFastHashFull', 'bool')
+    blockSize        = tk_variables_register_and_init('HashBlkSize'       , 'string')
+    blockSizeHR      = tk_variables_register_and_init('HashBlkSizeHR'     , 'string')
+    blockNum         = tk_variables_register_and_init('HashBlkNum'        , 'string')
+    blockTotal       = tk_variables_register_and_init('HashBlkTotal'      , 'string')
 
     previewMosaicX   = tk_variables_register_and_init('PrvwMosX'       , 'string')
     previewMosaicY   = tk_variables_register_and_init('PrvwMosY'       , 'string')
@@ -1505,10 +1497,12 @@ def wmake_settings( tab ):
     previewMosaicType= tk_variables_register_and_init('PrvwMosT'       , 'string')
     previewMosaicFilm= tk_variables_register_and_init('PrvwMosFilm'    , 'string')
 
-    # Create a scrollable frame to hold all the settings
+    # Create a scrollable frame to hold all the settings - - - - - - - - - - - -
     sf = ScrollableFrame( tab )
     sf.pack(fill='both', pady=(0,0), expand=True)
     sfSettings = sf.scrollable_frame
+
+    # Create single-button settings - - - - - - - - - - - - - - - - - - - - - - 
 
     tk.Checkbutton(sfSettings, text="Delete folder if they become empty by file removement",
         variable=chkbDelEmpFold ).pack(anchor="w", side='top', pady=(16,16) )
@@ -1526,8 +1520,31 @@ def wmake_settings( tab ):
         variable=chkbSaveMarkTxt ).pack(anchor="w", side='top', pady=(0,16) )
 
     tk.Checkbutton(sfSettings, text="Store file database at program's end to continue on next start without new 'search' (click 'Restore list')",
-        variable=chkbSaveFileDB ).pack(anchor="w", side='top', pady=(0,8) )
+        variable=chkbSaveFileDB ).pack(anchor="w", side='top', pady=(0,16) )
 
+    # Create Zoom-Slider for WINDOW SIZE - - - - - - - - - - - - - - - - - - - -
+            
+    winsizeFrame = ttk.Frame( sfSettings )
+    winsizeFrame.pack(anchor="w", side='top', fill="x", padx=(4,8), pady=4)
+    winsizeFrame['borderwidth'] = 2
+    winsizeFrame['relief'] = 'ridge'
+            
+    label = tk.Label(winsizeFrame, text="Window zoom factor:")
+    label.pack(anchor="w", side='left', padx=(8,0), pady=(0,5))
+            
+    def on_zoom_change(value):
+        global root
+        factor = float(value)
+        print("Faktor:", factor, value)
+        root.tk.call("tk", "scaling", factor)
+
+    scale = tk.Scale( winsizeFrame, from_=0.5, to=3.0, resolution=0.1, orient="horizontal",
+                      variable=slideWinZoom, command=on_zoom_change )
+    scale.pack(anchor="w", side='left', padx=(8,0), pady=(0,5) )        
+
+    label = tk.Label(winsizeFrame, text="(becomes active after rebooting this program)")
+    label.pack(anchor="w", side='left', padx=(8,0), pady=(0,5))
+            
     # Create a frame for the PREVIEW - - - - - - - - - - - - - - - - - - - - - -
 
     # helper function to calc fast hash parameters
@@ -1671,18 +1688,16 @@ if __name__ == "__main__":
     # Load the data from *.ini file or defaults and store in global variables
     init_data_load()
 
-    #print("initData1:", initData)
-
-    # Register the EXIT handler
+    # Register the EXIT handler to save settings
     atexit.register(on_exit)
 
     # Create my root window (main windows) -------------------------------------
     root = tk.Tk()
-
+    
     # Check data from e.g. *.ini file or defaults for consistency, root is needed
-    init_data_check( root )
+    init_win_geo_data_check( root )
 
-    #print("initData2:", initData)
+    root.tk.call("tk", "scaling", float(initData['WinZoomFactor']) )
 
     # Save program window information in my init data (to restore on next start)
     def on_win_change_update():
@@ -1691,9 +1706,8 @@ if __name__ == "__main__":
           [int(p) for p in root.geometry().replace("x","+").split("+")]
         #print("WIN: ", initData['winPosX'], initData['winPosY'], initData['winSizeX'], initData['winSizeY'])
 
-    afterId = None
-
     # Update my stored root window parameters if root window resized or moved
+    afterId = None
     def on_win_change(event):
         global afterId, root
         if afterId is not None:
@@ -1702,8 +1716,6 @@ if __name__ == "__main__":
 
     # Configure the root window
     root.bind("<Configure>", on_win_change)
-
-    #print("initData3:", initData)
 
     root.geometry(f"{initData['winSizeX']}x{initData['winSizeY']}+{initData['winPosX']}+{initData['winPosY']}")
     root.title('MvT De-Duplicator')

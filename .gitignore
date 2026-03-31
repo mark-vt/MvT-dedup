@@ -1,0 +1,9 @@
+# Ignore everything
+*
+
+# But keep these files
+!Copyright.txt
+!License.md
+!MvT_dedup.py
+!MvT_previewTiles.py
+!.gitignore
