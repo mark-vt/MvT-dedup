@@ -2,6 +2,8 @@
 #!packages/bin/python
 # ------------------------------------------------------------------------------
 
+# ffprobe -hide_banner -v error -select_streams v:0 -print_format json -show_entries stream=width,height,duration ~/Videos/ooo.mp4
+
 # Includes for normal file operations etc.
 import os
 import sys
@@ -581,22 +583,24 @@ def excl_dir_end(pat:str, p:str) -> bool:
 
 # List of all filter options, used to create exclude tab and to filter files
 exclOptionsFile=[
-    [excl_file_not_begin , "Exclude FILES whose names not begin with"   , None, None, colorBlock[1] ],
-    [excl_file_not_contain,"Exclude FILES whose names not contain"      , None, None, colorBlock[1] ],
-    [excl_file_not_end   , "Exclude FILES whose names not end with"     , None, None, colorBlock[1] ],
+    [excl_file_not_begin , "Exclude FILES whose names NOT begin with"   , None, None, colorBlock[1] ],
+    [excl_file_not_contain,"Exclude FILES whose names NOT contain"      , None, None, colorBlock[1] ],
+    [excl_file_not_end   , "Exclude FILES whose names NOT end with"     , None, None, colorBlock[1] ],
     [excl_file_begin     , "Exclude FILES whose names begin with"       , None, None, colorBlock[2] ],
     [excl_file_contain   , "Exclude FILES whose names contain"          , None, None, colorBlock[2] ],
-    [excl_file_end       , "Exclude FILES whose names end with"         , None, None, colorBlock[2] ],
-    [excl_size_smaller   , "Exclude FILES with size smaller than x"     , None, None, colorBlock[3] ],
-    [excl_size_bigger    , "Exclude FILES with size bigger than x"      , None, None, colorBlock[3] ] ]
+    [excl_file_end       , "Exclude FILES whose names end with"         , None, None, colorBlock[2] ] ]
+    
+exclOptionsSize=[    
+    [excl_size_smaller   , "Exclude FILES with size smaller than"       , None, None, colorBlock[3], "bytes" ],
+    [excl_size_bigger    , "Exclude FILES with size bigger than"        , None, None, colorBlock[3], "bytes" ] ]
 
 exclOptionsDelimiter=[
     [None                , None                                         , None, None, -1            ] ]
 
 exclOptionsDir=[
-    [excl_dir_not_begin  , "Exclude FOLDERS whose names begin with"     , None, None, colorBlock[1] ],
-    [excl_dir_not_contain, "Exclude FOLDERS whose names contain"        , None, None, colorBlock[1] ],
-    [excl_dir_not_end    , "Exclude FOLDERS whose names end with"       , None, None, colorBlock[1] ],
+    [excl_dir_not_contain, "Exclude FOLDERS whose names NOT contain"    , None, None, colorBlock[1] ],
+    [excl_dir_not_end    , "Exclude FOLDERS whose names NOT end with"   , None, None, colorBlock[1] ],
+    [excl_dir_not_begin  , "Exclude FOLDERS whose names NOT begin with" , None, None, colorBlock[1] ],
     [excl_dir_begin      , "Exclude FOLDERS whose names begin with"     , None, None, colorBlock[2] ],
     [excl_dir_contain    , "Exclude FOLDERS whose names contain"        , None, None, colorBlock[2] ],
     [excl_dir_end        , "Exclude FOLDERS whose names end with"       , None, None, colorBlock[2] ] ]
@@ -661,7 +665,7 @@ def wmake_exclude( tab ):
 
     # Fill in all the different possible selections from table above
     block = ''
-    for exOpt in exclOptionsFile + exclOptionsDelimiter + exclOptionsDir:
+    for exOpt in exclOptionsSize + exclOptionsDelimiter + exclOptionsFile + exclOptionsDelimiter + exclOptionsDir:
         # check if a block of options
         if block == exOpt[4]:
             distY = (1,1)
@@ -683,7 +687,9 @@ def wmake_exclude( tab ):
 #        if inspect.isfunction(exOpt[0]):
         exOpt[3] = tk_variables_register_and_init("VAL_"+exOpt[1], 'string')
         entry = tk.Entry(frameL, textvariable=exOpt[3], font='TkFixedFont', bg=exOpt[4] )
-        entry.pack(side='left', padx=(2,8), fill='x', expand=True)
+        entry.pack(side='left', padx=(2,4), fill='x', expand=True)
+        if len(exOpt) > 5 and exOpt[5] is not None:
+            tk.Label( frameL, text=exOpt[5] ).pack(side='left', padx=(0,8) )   
 
 # ------------------------------------------------------------------------------
 # Search tab -------------------------------------------------------------------
@@ -762,7 +768,7 @@ def calc_b3_fast_wrap(filename):
 
 # Walk through the given folder and it's subfolders and add all files which
 # are not excluded to my database
-def search_files( folder ):
+def list_files( folder ):
     global fileDB, searchStopFlag, searchFileCnt
 
     status_write( f"Search in:{folder}" )
@@ -800,9 +806,9 @@ def search_files( folder ):
             # every second print the number of files found, yet
             time_now = time.time()
             if time_now - time_last >= 1.0:
-                search_files.label.config(text=f"Processed: {searchFileCnt:,}")
-                #search_files.label.update_idletasks()
-                search_files.label.update()
+                list_files.label.config(text=f"Processed: {searchFileCnt:,}")
+                #list_files.label.update_idletasks()
+                list_files.label.update()
                 time_last = time_now
 
             # if this is the first file with this size ...
@@ -833,11 +839,11 @@ def search_files( folder ):
                     size_db[hashval] = { file_path : False }
 
     # at the end display the complete number of files checked
-    search_files.label.config(text=f"Processed: {searchFileCnt:,}")
-    search_files.label.update()
+    list_files.label.config(text=f"Processed: {searchFileCnt:,}")
+    list_files.label.update()
 
 # Walk over all folders given in FOLDER-TAB and add their files to database
-def search_start():
+def list_start():
     global searchFolders, searchStopFlag
 
     searchStopFlag = False
@@ -846,24 +852,24 @@ def search_start():
         # if search is disabled, continue with next folder
         if searchFolders[folder] == 0:
             continue
-        search_files(folder)
+        list_files(folder)
         if searchStopFlag:
             status_write( "Search stopped by user!" )
             break
 
     if not searchStopFlag:
         status_write( "Search done!" )
-        search_cleanup()
-        search_update()
+        list_cleanup()
+        list_update()
 
 # This will be called if STOP button was pressed to interrupt the file addition
-def search_stop():
+def list_stop():
     global searchStopFlag
     searchStopFlag = True
     status_write( "STOP button pressed!" )
 
 # Walk over the database with ALL files and remove everything which has no duplicates
-def search_cleanup():
+def list_cleanup():
     global fileDB
     status_write( "Remove single entries ..." )
     groups=0
@@ -894,7 +900,7 @@ def search_cleanup():
 
 # Changes the background color of an entry if e.g. clicked by mouse
 
-def search_del_flag_chg(flagObj, flag):
+def list_del_flag_chg(flagObj, flag):
     global tree
 
     if flagObj.get() != flag:
@@ -909,7 +915,7 @@ def search_del_flag_chg(flagObj, flag):
             current_tags.add("col0")
         tree.item(iid, text=boxChar[flag], tags=tuple(current_tags))
 
-def search_update_tree( frame ):
+def list_update_tree( frame ):
     global tree, iidDB, fileDB, current_iid
 
     # If the tree already exists, completley destroy it
@@ -952,16 +958,16 @@ def search_update_tree( frame ):
         match action:
             case "markOther":
                 for file in fileDB[size][hashval]:
-                    search_del_flag_chg(fileDB[size][hashval][file], file != filename)
+                    list_del_flag_chg(fileDB[size][hashval][file], file != filename)
             case "invertMarks":
                 for file in fileDB[size][hashval]:
                     flagObj = fileDB[size][hashval][file]
                     flag    = not flagObj.get()
-                    search_del_flag_chg(flagObj, not flagObj.get())
+                    list_del_flag_chg(flagObj, not flagObj.get())
             case "markThis":
-                search_del_flag_chg(fileDB[size][hashval][filename], True)
+                list_del_flag_chg(fileDB[size][hashval][filename], True)
             case "keepThis":
-                search_del_flag_chg(fileDB[size][hashval][filename], False)
+                list_del_flag_chg(fileDB[size][hashval][filename], False)
             case "copyPF":
                 root.clipboard_clear()
                 root.clipboard_append(filename)
@@ -973,7 +979,7 @@ def search_update_tree( frame ):
                 root.clipboard_append(os.path.dirname(filename))
             case "delete":
                 delete_file(filename)
-                search_delete_file_from_DBs(size, hashval, filename)
+                list_delete_file_from_DBs(size, hashval, filename)
 
     # Menu if right-click to CheckBox
     menu0 = tk.Menu(root, tearoff=0)
@@ -1006,7 +1012,7 @@ def search_update_tree( frame ):
             # if click to Checkbox then toggle state
             if col == "#0":
                 flag = not fileDB[size][hashval][filename].get()
-                search_del_flag_chg(fileDB[size][hashval][filename], flag)
+                list_del_flag_chg(fileDB[size][hashval][filename], flag)
             else:       # if column "Name"
                 globals().__setitem__('lastSelectedFile', os.path.dirname(filename))
                 #print("LAST:", lastSelectedFile)
@@ -1072,27 +1078,27 @@ def search_update_tree( frame ):
 
 # Completely rebuild the file list with CheckBoxes in a scrollable frame
 # May need some time on bigger lists or on slow networks if running remote.
-def search_update():
+def list_update():
     global fileDB, tkVars, lastSelectedFile, colorFile
 
-    if not hasattr(search_update, "frame"):
-        sys.exit("ERROR: Call to 'search_update' but not initialized 'search_update.frame'")
+    if not hasattr(list_update, "frame"):
+        sys.exit("ERROR: Call to 'list_update' but not initialized 'list_update.frame'")
 
     i=0
     status_write( "Build list with duplicates ..." )
 
     # Completely remove the old list
-    for widget in search_update.frame.winfo_children():  widget.destroy()
+    for widget in list_update.frame.winfo_children():  widget.destroy()
 
-    #search_update_CbEntry( search_update.frame )
-    search_update_tree( search_update.frame )
+    #search_update_CbEntry( list_update.frame )
+    list_update_tree( list_update.frame )
 
     status_write( "Build list with duplicates ... DONE, display may be delayed" )
 
 # A single entry in the DB will be deleted here. If last entry or if only one
 # entry left (which shall not be deleted), then remove hash entry, too. If this
 # was last hash, delete also size entry. The file itself will NOT be deleted here.
-def search_delete_file_from_DBs(size, hashval, filename):
+def list_delete_file_from_DBs(size, hashval, filename):
     global fileDB, tree
     status_write( f"Delete from DB: {filename}" )
 
@@ -1126,7 +1132,7 @@ def search_delete_file_from_DBs(size, hashval, filename):
 
 # Walk through the whole DB and delete all files marked for to be deleted
 # In a 2nd run delete then all DB entries where file was deleted before
-def search_delete_marked():
+def list_delete_marked():
     global fileDB
     status_write( "Delete marked!" )
 
@@ -1151,18 +1157,18 @@ def search_delete_marked():
 
     # Now really delete the DB entries to be deleted, do it here to not screw up the loops above
     for size, hashval, filename in toDeleteInDB:
-        search_delete_file_from_DBs(size, hashval, filename)
+        list_delete_file_from_DBs(size, hashval, filename)
 
     # Update the displayed list of duplicate files
-    #search_update()
+    #list_update()
 
 # Debug function to print the content of the DB to console
-def search_show():
+def list_show():
     global fileDB
     print(fileDB)
 
 # Write the DB into a JSON file
-def search_save():
+def list_save():
     global fileDB, fileNameData
 
     # Copy my fileDB dict to new dict 'x' and replace tk.BooleanVar with 'bool'
@@ -1179,7 +1185,7 @@ def search_save():
         status_write(f'File/groups are written to file: {fileNameData}')
 
 # Read database from JSON file and put it into my DB, old data in DB will be overwritten
-def search_restore():
+def list_restore():
     global fileDB, fileNameData
 
     if os.path.exists(fileNameData):
@@ -1194,70 +1200,70 @@ def search_restore():
         fileDB = {int(k): v for k, v in raw.items()}
 
         status_write(f'Files/groups loaded successfuly from file: {fileNameData}')
-        search_cleanup()
-        search_update()
+        list_cleanup()
+        list_update()
     else:
         status_write(f'File/groups file not found: {fileNameData}')
 
 
-def search_clear():
+def list_clear():
     global fileDB
     fileDB.clear()
-    search_update()
+    list_update()
 
 
-def wmake_search( tab ):
+def wmake_list( tab ):
     # Create button frame
     butSearchFrame = ttk.Frame( tab )
     butSearchFrame.pack(padx = 10, pady=5, side=tk.TOP)
     # "START" button
-    butSearchStart = tk.Button( butSearchFrame, text='START search', command=search_start, bg=colorButt[0] )
+    butSearchStart = tk.Button( butSearchFrame, text='START search', command=list_start, bg=colorButt[0] )
     butSearchStart.pack(padx = 10, pady=5, side=tk.LEFT)
     # "STOP" button
-    butSearchStop = tk.Button( butSearchFrame, text='STOP search', command=search_stop, bg=colorButt[2] )
+    butSearchStop = tk.Button( butSearchFrame, text='STOP search', command=list_stop, bg=colorButt[2] )
     butSearchStop.pack(padx = 10, pady=5, side=tk.LEFT)
     # "DELETE marked" button
-    butSearchDel = tk.Button( butSearchFrame, text='Delete marked', command=search_delete_marked, bg=colorButt[1] )
+    butSearchDel = tk.Button( butSearchFrame, text='Delete marked', command=list_delete_marked, bg=colorButt[1] )
     butSearchDel.pack(padx = 10, pady=5, side=tk.LEFT)
     # "SHOW DB" button
-    #butSearchStop = tk.Button( butSearchFrame, text='SHOW_DB', command=search_show, bg=colorButt[3] )
+    #butSearchStop = tk.Button( butSearchFrame, text='SHOW_DB', command=list_show, bg=colorButt[3] )
     #butSearchStop.pack(padx = 10, pady=5, side=tk.LEFT)
     # Create a scrollable frame to hold all the file groups/entries
 
     # With this label the number of files processed are shown right of buttons
     labelSearchProgress = tk.Label( butSearchFrame, text='Progress: ' )
     labelSearchProgress.pack(padx = 10, pady=5, side=tk.LEFT)
-    search_files.label = labelSearchProgress
+    list_files.label = labelSearchProgress
 
     # "Save list" button
-    butSearchStart = tk.Button( butSearchFrame, text='Save list', command=search_save, bg=colorButt[4] )
+    butSearchStart = tk.Button( butSearchFrame, text='Save list', command=list_save, bg=colorButt[4] )
     butSearchStart.pack(padx = 10, pady=5, side=tk.LEFT)
     # "Restore list" button
-    butSearchStop = tk.Button( butSearchFrame, text='Restore list', command=search_restore, bg=colorButt[3] )
+    butSearchStop = tk.Button( butSearchFrame, text='Restore list', command=list_restore, bg=colorButt[3] )
     butSearchStop.pack(padx = 10, pady=5, side=tk.LEFT)
     # "Clear list" button
-    butSearchStop = tk.Button( butSearchFrame, text='Clear list', command=search_clear, bg=colorButt[1] )
+    butSearchStop = tk.Button( butSearchFrame, text='Clear list', command=list_clear, bg=colorButt[1] )
     butSearchStop.pack(padx = 10, pady=5, side=tk.LEFT)
 
     # Create scrollable frame for the duplicate groups
 
     #sf = ScrollableFrame( tab )
     #sf.pack(fill='both', expand=True)
-    #search_update.frame = sf.scrollable_frame
+    #list_update.frame = sf.scrollable_frame
 
     searchListFrame = ttk.Frame( tab )
     searchListFrame.pack(fill='both', expand=True, padx=4, pady=0)
-    search_update.frame = searchListFrame
+    list_update.frame = searchListFrame
 
     # Fill in the files
-    #search_update()
+    #list_update()
 
 # ------------------------------------------------------------------------------
 # Mark to delete ---------------------------------------------------------------
 
 def mark_no_files(db, s, flagNot, flagIgCa):
     for k in db:
-        search_del_flag_chg( db[k], flagNot )
+        list_del_flag_chg( db[k], flagNot )
 
 def mark_length_name(db, s, flagNot, flagIgCa):
     # 1) get unique lengths in descending order
@@ -1270,7 +1276,7 @@ def mark_length_name(db, s, flagNot, flagIgCa):
     flag = False
     for l in d2:
         for k in d2[l]:
-            search_del_flag_chg( db[k], flag )
+            list_del_flag_chg( db[k], flag )
             flag = True
 
 # ---------------------------------------
@@ -1281,7 +1287,7 @@ def mark_length_path(db, s, flagNot, flagIgCa):
     flag = False
     for l in d2:
         for k in d2[l]:
-            search_del_flag_chg( db[k], flag )
+            list_del_flag_chg( db[k], flag )
             flag = True
 
 # ---------------------------------------
@@ -1289,7 +1295,7 @@ def mark_alpha_path(db, s, flagNot, flagIgCa):
     d2 = sorted({k for k in db}, reverse=flagNot)
     flag = False
     for k in d2:
-        search_del_flag_chg( db[k], flag )
+        list_del_flag_chg( db[k], flag )
         flag = True
 
 # ---------------------------------------
@@ -1301,7 +1307,7 @@ def mark_on_path(db, s, flagNot, flagIgCa):
     if flag == 3:
         for k in db:
             flag = flagNot  if k.startswith(s.get())  else  not flagNot
-            search_del_flag_chg( db[k], flag )
+            list_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
 def mark_one_word_file(db, s, flagNot, flagIgCa):
@@ -1316,7 +1322,7 @@ def mark_one_word_file(db, s, flagNot, flagIgCa):
         for k in db:
             x = os.path.basename(k).lower()  if flagIgCa  else  os.path.basename(k)
             flag = flagNot  if any(w in x for w in words) else  not flagNot
-            search_del_flag_chg( db[k], flag )
+            list_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
 def mark_all_words_file(db, s, flagNot, flagIgCa):
@@ -1331,7 +1337,7 @@ def mark_all_words_file(db, s, flagNot, flagIgCa):
         for k in db:
             x = os.path.basename(k).lower()  if flagIgCa  else  os.path.basename(k)
             flag = flagNot  if all(w in x for w in words) else  not flagNot
-            search_del_flag_chg( db[k], flag )
+            list_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
 def mark_one_word_path(db, s, flagNot, flagIgCa):
@@ -1346,7 +1352,7 @@ def mark_one_word_path(db, s, flagNot, flagIgCa):
         for k in db:
             x = os.path.dirname(k).lower()  if flagIgCa  else  os.path.dirname(k)
             flag = flagNot  if any(w in x for w in words) else  not flagNot
-            search_del_flag_chg( db[k], flag )
+            list_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
 def mark_all_words_path(db, s, flagNot, flagIgCa):
@@ -1361,7 +1367,7 @@ def mark_all_words_path(db, s, flagNot, flagIgCa):
         for k in db:
             x = os.path.dirname(k).lower()  if flagIgCa  else  os.path.dirname(k)
             flag = flagNot  if all(w in x for w in words) else  not flagNot
-            search_del_flag_chg( db[k], flag )
+            list_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
 def mark_one_word_pafi(db, s, flagNot, flagIgCa):
@@ -1376,7 +1382,7 @@ def mark_one_word_pafi(db, s, flagNot, flagIgCa):
         for k in db:
             x = k.lower()  if flagIgCa  else  k
             flag = flagNot  if any(w in x for w in words) else  not flagNot
-            search_del_flag_chg( db[k], flag )
+            list_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
 def mark_all_words_pafi(db, s, flagNot, flagIgCa):
@@ -1391,7 +1397,7 @@ def mark_all_words_pafi(db, s, flagNot, flagIgCa):
         for k in db:
             x = k.lower()  if flagIgCa  else  k
             flag = flagNot  if all(w in x for w in words) else  not flagNot
-            search_del_flag_chg( db[k], flag )
+            list_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
 def mark_process( func, sVar, flagCond, flagIgCa ):
@@ -1674,7 +1680,7 @@ def main( root ):              # Fill my main windows with life
 
     wmake_exclude( tabs['EXCL'][1] )
 
-    wmake_search( tabs['FIND'][1] )
+    wmake_list( tabs['FIND'][1] )
 
     wmake_mark( tabs['MARK'][1] )
 
