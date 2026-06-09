@@ -6,9 +6,164 @@ import json
 import re
 import subprocess
 from fractions import Fraction
+import argparse
+from pathlib import Path
 
+# --------------------------------- CODE ---------------------------------------
 
-def _run_ffprobe(path, count_frames=False):
+def _check_mp4_faststart(pathfile):
+
+    with Path(pathfile).open("rb") as f:
+        f.seek(0, 2)
+        file_size = f.tell()
+        f.seek(0)
+
+        boxes = []
+        saw_ftyp = False
+
+        while f.tell() + 8 <= file_size:
+            offset = f.tell()
+            header = f.read(8)
+
+            if len(header) < 8:
+                return {
+                    "flag"  : None,
+                    "status": "unknown",
+                    "reason": "incomplete Box-Header",
+                    "file_size": file_size,
+                    "boxes": boxes,
+                }
+
+            size = int.from_bytes(header[0:4], "big")
+            box_type = header[4:8].decode("ascii", errors="replace")
+            header_size = 8
+
+            if size == 1:
+                large_size_data = f.read(8)
+                if len(large_size_data) < 8:
+                    return {
+                        "flag"  : None,
+                        "status": "unknown",
+                        "reason": f"Incomplete Large-Size-Header at Box {box_type}",
+                        "file_size": file_size,
+                        "boxes": boxes,
+                    }
+                size = int.from_bytes(large_size_data, "big")
+                header_size = 16
+
+            elif size == 0:
+                size = file_size - offset
+
+            if size < header_size:
+                return {
+                    "flag"  : None,
+                    "status": "unsupported_container",
+                    "reason": f"Invalid boxsize at offset {offset}",
+                    "file_size": file_size,
+                    "boxes": boxes,
+                }
+
+            next_offset = offset + size
+            if next_offset > file_size:
+                return {
+                    "flag"  : None,
+                    "status": "unsupported_container",
+                    "reason": f"Box {box_type} at offset {offset} longer than file",
+                    "file_size": file_size,
+                    "boxes": boxes,
+                }
+
+            box_info = {
+                "type": box_type,
+                "offset": offset,
+                "size": size,
+            }
+
+            if box_type == "ftyp":
+                saw_ftyp = True
+
+                if size >= 16:
+                    major_brand = f.read(4).decode("ascii", errors="replace")
+                    minor_version = int.from_bytes(f.read(4), "big")
+                    compatible_len = size - header_size - 8
+                    compatible_brands = []
+
+                    if compatible_len > 0:
+                        compatible_data = f.read(compatible_len)
+                        for i in range(0, len(compatible_data) - (len(compatible_data) % 4), 4):
+                            compatible_brands.append(
+                                compatible_data[i:i + 4].decode("ascii", errors="replace")
+                            )
+
+                    box_info["major_brand"] = major_brand
+                    box_info["minor_version"] = minor_version
+                    box_info["compatible_brands"] = compatible_brands
+                else:
+                    return {
+                        "flag"  : None,
+                        "status": "unsupported_container",
+                        "reason": "ftyp-Box too small",
+                        "file_size": file_size,
+                        "boxes": boxes,
+                    }
+
+            boxes.append(box_info)
+
+            if offset == 0 and box_type != "ftyp":
+                return {
+                    "flag"  : None,
+                    "status": "unsupported_container",
+                    "reason": "File doesn't start with ftyp-Box, not a normal MP4/MOV",
+                    "file_size": file_size,
+                    "boxes": boxes,
+                }
+
+            if box_type == "moov":
+                return {
+                    "flag"  : True,
+                    "status": "faststart_probable",
+                    "reason": "moov before mdat",
+                    "file_size": file_size,
+                    "found_box": box_type,
+                    "found_offset": offset,
+                    "found_size": size,
+                    "boxes": boxes,
+                }
+
+            if box_type == "mdat":
+                return {
+                    "flag"  : False,
+                    "status": "not_faststart_probable",
+                    "reason": "mdat before moov",
+                    "file_size": file_size,
+                    "found_box": box_type,
+                    "found_offset": offset,
+                    "found_size": size,
+                    "boxes": boxes,
+                }
+
+            f.seek(next_offset)
+
+        if not saw_ftyp:
+            return {
+                "flag"  : None,
+                "status": "unsupported_container",
+                "reason": "No ftyp-Box found, perhaps no MP4/MOV",
+                "file_size": file_size,
+                "boxes": boxes,
+            }
+
+    return {
+        "flag"  : None,
+        "status": "unknown",
+        "reason": "Found neither moov nor mdat",
+        "file_size": file_size,
+        "boxes": boxes,
+    }
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+def _run_ffprobe(pathfile, count_frames=False):
     cmd = [
         "ffprobe",
         "-v", "error",
@@ -28,12 +183,13 @@ def _run_ffprobe(path, count_frames=False):
             ":format=duration,size"
         ),
         "-of", "json",
-        path,
+        pathfile,
     ]
 
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     return json.loads(result.stdout)
 
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 def _parse_fraction(value):
     if not value or value in ("0/0", "N/A"):
@@ -43,6 +199,7 @@ def _parse_fraction(value):
     except Exception:
         return None
 
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 def _to_int_or_none(value):
     if value in (None, "N/A"):
@@ -52,6 +209,7 @@ def _to_int_or_none(value):
     except (ValueError, TypeError):
         return None
 
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 def _infer_bits_from_sample_fmt(sample_fmt):
     if not sample_fmt:
@@ -83,6 +241,7 @@ def _infer_bits_from_sample_fmt(sample_fmt):
 
     return None
 
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 def _to_bool_from_int(value):
     value = _to_int_or_none(value)
@@ -90,9 +249,13 @@ def _to_bool_from_int(value):
         return None
     return bool(value)
 
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-def get_media_info(path, use_count_frames_fallback=True, estimate_frames_fallback=True):
-    data = _run_ffprobe(path, count_frames=False)
+def get_media_info(pathfile, use_count_frames_fallback=True, estimate_frames_fallback=True):
+
+    pathfile = str(Path(pathfile).expanduser().resolve())
+
+    data = _run_ffprobe(pathfile, count_frames=False)
 
     streams = data.get("streams", [])
     if not streams:
@@ -106,7 +269,7 @@ def get_media_info(path, use_count_frames_fallback=True, estimate_frames_fallbac
 
     duration = format_data.get("duration")
     duration = float(duration) if duration not in (None, "N/A") else None
-    
+
     fsize = int(format_data.get("size"))
 
     r_frame_rate = video_stream.get("r_frame_rate")
@@ -117,7 +280,7 @@ def get_media_info(path, use_count_frames_fallback=True, estimate_frames_fallbac
     frame_source = "nb_frames"
 
     if nb_frames is None and use_count_frames_fallback:
-        counted_data = _run_ffprobe(path, count_frames=True)
+        counted_data = _run_ffprobe(pathfile, count_frames=True)
         counted_streams = counted_data.get("streams", [])
         counted_video_stream = next((s for s in counted_streams if s.get("codec_type") == "video"), None)
 
@@ -156,7 +319,7 @@ def get_media_info(path, use_count_frames_fallback=True, estimate_frames_fallbac
             estimated_audio_size_bytes = int(audio_bit_rate * duration / 8)
         else:
             estimated_audio_size_bytes = None
-            
+
         audio_streams.append({
             "index": _to_int_or_none(stream.get("index")),
             "language": tags.get("language"),
@@ -175,42 +338,40 @@ def get_media_info(path, use_count_frames_fallback=True, estimate_frames_fallbac
             "default": _to_bool_from_int(disposition.get("default")),
             "forced": _to_bool_from_int(disposition.get("forced")),
         })
-        
+
     video_bit_rate = _to_int_or_none(video_stream.get("bit_rate"))
     estimated_video_size_bytes = None
     if video_bit_rate is not None and duration is not None:
         estimated_video_size_bytes = int(video_bit_rate * duration / 8)
 
-    return {
-        "format": {
-            "size": fsize,
-            "duration": duration,
-        },
-        "video": {
-            "width": _to_int_or_none(video_stream.get("width")),
-            "height": _to_int_or_none(video_stream.get("height")),
-            "codec_name": video_stream.get("codec_name"),
-            "bit_rate": _to_int_or_none(video_stream.get("bit_rate")),
-            "estimated_size_bytes": estimated_video_size_bytes,
-            "r_frame_rate": r_frame_rate,
-            "avg_frame_rate": avg_frame_rate,
-            "fps": fps,
-            "nb_frames": nb_frames,
-            "frame_source": frame_source if nb_frames is not None else None,
-        },
-        "audios": audio_streams,
-    }
+    return {    "format": 
+                {
+                    "size": fsize,
+                    "duration": duration,
+                },
+                "video": 
+                {
+                    "width": _to_int_or_none(video_stream.get("width")),
+                    "height": _to_int_or_none(video_stream.get("height")),
+                    "codec_name": video_stream.get("codec_name"),
+                    "bit_rate": _to_int_or_none(video_stream.get("bit_rate")),
+                    "estimated_size_bytes": estimated_video_size_bytes,
+                    "r_frame_rate": r_frame_rate,
+                    "avg_frame_rate": avg_frame_rate,
+                    "fps": fps,
+                    "nb_frames": nb_frames,
+                    "frame_source": frame_source if nb_frames is not None else None,
+                },
+                "audios": audio_streams,
+                "faststart": _check_mp4_faststart(pathfile)
+            }
 
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 if __name__ == "__main__":
-    import argparse
-    from pathlib import Path
-
     parser = argparse.ArgumentParser(description="Read Video-Infos with ffprobe.")
     parser.add_argument("filename", help="path/name video file")
     args = parser.parse_args()
-
-    video_path = str(Path(args.filename).expanduser().resolve())
-
-    info = get_media_info(video_path)
+    info = get_media_info(args.filename)
     print(json.dumps(info, indent=2, ensure_ascii=False))

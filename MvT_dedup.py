@@ -13,23 +13,25 @@ import shlex
 import atexit
 import datetime
 import subprocess
-from   blake3 import blake3
-from   send2trash import send2trash
-from   PIL import Image, ImageTk, UnidentifiedImageError   # Pillow, for images
+
+from blake3 import blake3
+from send2trash import send2trash
+from PIL import Image, ImageTk, UnidentifiedImageError   # Pillow, for images
 
 # Includes for GUI stuff
 import tkinter as tk
-from   tkinter import ttk
-from   tkinter.scrolledtext import ScrolledText
-from   tkinter import filedialog
 import tkinter.font as tkFont
+
+from tkinter import ttk
+from tkinter.scrolledtext import ScrolledText
+from tkinter import filedialog
 
 # ------------------------------------------------------------------------------
 # Global Variables -------------------------------------------------------------
 
 version = '1.03'
 
-searchFileCnt = 0;
+searchFileCnt = 0
 
 # Save and restore settings, normal - default - from_tk_var
 initData = {}
@@ -42,12 +44,12 @@ iidDB = {}
 # The file tree TK structure which holds all the diplicates in TreeView way
 tree = None
 # Will be set by function 'on_click' with iid+col of clicked line
-current_iid = (None,None)
+current_iid = (None, None)
 
 # hold folders to be searched
-searchFolders      = {}
+searchFolders = {}
 # last folder for file dialog
-searchFolderLast   = ""
+searchFolderLast = ""
 # marked for enable/disable/remove
 searchFolderMarked = []
 # used to stop search process by user
@@ -239,7 +241,7 @@ def tk_variables_get_to_save():
 def humread(n: int) -> str:
     import math
 
-    units = ["B", "KB", "MB", "GB", "TB", "PB", 'EB', 'ZB', 'YB' ]
+    units = ["B", "KB", "MB", "GB", "TB", "PB", 'EB', 'ZB', 'YB']
     base = 1024
 
     if n <= 999:
@@ -1669,11 +1671,11 @@ def main( root ):              # Fill my main windows with life
 
     wmake_status_area( root )
 
-    tabs = { 'FOLD' : [ ' Select Folder ', None ],
-             'EXCL' : [ ' Exclude from selection ', None ],
-             'FIND' : [ ' Find Dups ', None ],
-             'MARK' : [ ' Mark to delete ', None ],
-             'PARM' : [ ' Settings ', None ] }
+    tabs = { 'FOLD' : [' Select Folder ', None ],
+             'EXCL' : [' Exclude from selection ', None ],
+             'FIND' : [' Find Dups ', None ],
+             'MARK' : [' Mark to delete ', None ],
+             'PARM' : [' Settings ', None ] }
     wmake_tabs( root, tabs )
 
     wmake_search_folder( tabs['FOLD'][1] )
