@@ -25,11 +25,13 @@ import tkinter.font as tkFont
 from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
 from tkinter import filedialog
+from typing import Callable
+import stat as _stat
 
 # ------------------------------------------------------------------------------
 # Global Variables -------------------------------------------------------------
 
-version = '1.03'
+version = '1.04'
 
 searchFileCnt = 0
 
@@ -89,7 +91,8 @@ extensionMovie = '".mp4" ".mpg" ".mpeg" ".avi" ".mkv" ".flv" ".wmv"'
 
 from MvT_previewTiles import MvT_preview_tiles
 
-def is_probably_picture_file(pathfile):
+def is_probably_picture_file(pathfile: str) -> bool:
+    """Try to open pathfile as an image; return True if valid, False otherwise."""
     try:
         with Image.open(pathfile) as img:
             img.verify()  # prüft grob die Integrität
@@ -97,7 +100,7 @@ def is_probably_picture_file(pathfile):
     except (UnidentifiedImageError, OSError):
         return False
 
-def is_probably_text_file(path, blocksize=1024):
+def is_probably_text_file(path: str, blocksize: int = 1024) -> bool:
     """
     Heuristic: True, if file is text, otherwise False
     """
@@ -122,7 +125,8 @@ def is_probably_text_file(path, blocksize=1024):
     except UnicodeDecodeError:
         return False
 
-def image_show_in_window(image_path, delFlg):  # PILLOW version for image output
+def image_show_in_window(image_path: str, delFlg: bool) -> None:  # PILLOW version for image output
+    """Open image_path in a new Tk window. If delFlg is True, delete the file when the window is closed."""
     global root                                # supports more image formats
 
     win = tk.Toplevel(root)
@@ -134,7 +138,7 @@ def image_show_in_window(image_path, delFlg):  # PILLOW version for image output
     label.image = photo  # Referenz halten!
     label.pack(fill="both", expand=True)
 
-    def on_close():
+    def on_close() -> None:
         # delete the file
         try:
             if os.path.exists(image_path):
@@ -149,7 +153,8 @@ def image_show_in_window(image_path, delFlg):  # PILLOW version for image output
     if delFlg:
         win.protocol("WM_DELETE_WINDOW", on_close)
 
-def show_preview_win( pathfile :str ):
+def show_preview_win( pathfile: str ) -> None:
+    """Show a preview of pathfile: display images directly, generate a mosaic preview for videos, or report unsupported type."""
     delFlag = False
     s = tkVars['PrvwMosFilm'].get()
     mov_ext_list = [part.strip('"') for part in s.split()]
@@ -158,7 +163,7 @@ def show_preview_win( pathfile :str ):
 
     if is_probably_picture_file( pathfile ):        # if image, display it
         image_show_in_window( pathfile, delFlag )
-    elif pureExt in mov_ext_list:                   # if video, create preview image and display it
+    elif pureExt.lower() in mov_ext_list:           # if video, create preview image and display it
         ext = tkVars['PrvwMosT'].get()
         outFile = f'{pureFile}.{ext}'
         # if no preview file of this type exists
@@ -182,7 +187,8 @@ def show_preview_win( pathfile :str ):
 
 # File system operations -------------------------
 
-def delete_file( pathfile :str ):
+def delete_file( pathfile: str ) -> None:
+    """Delete pathfile to trash or permanently, depending on the 'DeleteToTrash' setting."""
     if tkVars['DeleteToTrash'].get():
         send2trash(pathfile)
         status_write(f"File {pathfile} moved to trash!")
@@ -190,7 +196,8 @@ def delete_file( pathfile :str ):
         os.remove(pathfile)
         status_write(f"File {pathfile} deleted!")
 
-def delete_empty_folder(folder :str):
+def delete_empty_folder(folder: str) -> None:
+    """Delete folder if it is empty and the 'DelEmptyFolder' setting is active."""
     global initData
     if tkVars['DelEmptyFolder'].get():
         if tkVars['DeleteToTrash'].get():
@@ -201,13 +208,15 @@ def delete_empty_folder(folder :str):
             status_write(f"Empty folder {folder} deleted!")
 
 def is_dir_empty(path :str) -> bool:
+    """Return True if the directory at path contains no entries."""
     # os.scandir returns an iterator of DirEntry objects.
     # next(..., None) yields the first entry or None if empty.
     return next(os.scandir(path), None) is None
 
 # Save in INI file helpers -----------------------
 
-def tk_variables_register_and_init(key, typ):
+def tk_variables_register_and_init(key: str, typ: str) -> tk.Variable:
+    """Create a tk variable of type typ ('s'=String, 'b'=Bool, 'i'=Int, 'd'=Double) for key, initialised from initData or defaults. Returns the variable."""
     global tkVars, initData
 
     if key in initData:
@@ -230,15 +239,16 @@ def tk_variables_register_and_init(key, typ):
     tkVars[key] = tkv
     return tkv
 
-def tk_variables_get_to_save():
+def tk_variables_get_to_save() -> None:
+    """Copy current values of all tkinter variables back into initData for persistence."""
     global tkVars, initData
     for key in tkVars:
         initData[key] = tkVars[key].get()
 
 # General ----------------------------------------
 
-# convert integers into human readable with at least 3 valid digits (with dot), hex-based, not decimal based
 def humread(n: int) -> str:
+    """Convert an integer n into a human-readable string with appropriate units (B, KB, MB, etc.) using base 1024 and at least 3 significant digits."""
     import math
 
     units = ["B", "KB", "MB", "GB", "TB", "PB", 'EB', 'ZB', 'YB']
@@ -256,7 +266,8 @@ def humread(n: int) -> str:
 
 # Class for scrollable frames --------------------
 class ScrollableFrame(tk.Frame):
-    def __init__(self, parent, *args, **kwargs):
+    def __init__(self, parent: tk.Widget, *args, **kwargs) -> None:
+        """Build a scrollable frame; place inner widgets inside self.scrollable_frame."""
         super().__init__(parent, *args, **kwargs)
 
         self.canvas = tk.Canvas(self, borderwidth=0)
@@ -276,20 +287,23 @@ class ScrollableFrame(tk.Frame):
         self.canvas.bind("<Enter>", self._bind_mousewheel)
         self.canvas.bind("<Leave>", self._unbind_mousewheel)
 
-    def _bind_mousewheel(self, event):
+    def _bind_mousewheel(self, event: tk.Event) -> None:
+        """Globally bind mouse-wheel events when the pointer enters the canvas."""
         # Windows and macOS
         self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
         # Linux (You may need to bind globally, or test on your platform)
         self.canvas.bind_all("<Button-4>", self._on_mousewheel)
         self.canvas.bind_all("<Button-5>", self._on_mousewheel)
 
-    def _unbind_mousewheel(self, event):
+    def _unbind_mousewheel(self, event: tk.Event) -> None:
+        """Globally unbind mouse-wheel events when the pointer leaves the canvas."""
         # Unbind only when mouse leaves
         self.canvas.unbind_all("<MouseWheel>")
         self.canvas.unbind_all("<Button-4>")
         self.canvas.unbind_all("<Button-5>")
 
-    def _on_mousewheel(self, event):
+    def _on_mousewheel(self, event: tk.Event) -> None:
+        """Scroll canvas on mouse-wheel event; handles Windows/macOS delta and Linux Button-4/5."""
         if event.num == 4:
             self.canvas.yview_scroll(-1, "units")
         elif event.num == 5:
@@ -300,11 +314,13 @@ class ScrollableFrame(tk.Frame):
 
 # Screen & windows helpers -----------------------------------------------------
 
-def getScreenSize( root ):
+def get_screen_size( root: tk.Tk ) -> tuple[int, int]:
+    """Return (width, height) of the primary screen via the root Tk instance."""
     return root.winfo_screenwidth(), root.winfo_screenheight()
 
 # Save/remember settings at program end to a *.ini file for next start ---------
-def on_exit():
+def on_exit() -> None:
+    """atexit handler: save current window geometry, settings, and search folders to the ini file."""
     global initData, fileNameInit
     print("Program is ending! Saving settings.")
 
@@ -321,7 +337,8 @@ def on_exit():
 # ------------------------------------------------------------------------------
 # Basic information from *.ini file
 
-def init_data_load():
+def init_data_load() -> None:
+    """Load settings from the ini file into initData; use built-in defaults if the file is absent or invalid."""
     global initData, searchFolders, searchFolderLast, fileNameInit
 
     # If no such file or failed, use this for initialization
@@ -365,22 +382,24 @@ def init_data_load():
 
 
 # Check some data about windows geometry if it makes sense, root window needed!
-def init_win_geo_data_check( root ):
+def init_win_geo_data_check( root: tk.Tk ) -> None:
+    """Clamp stored window size and position in initData to fit within the current screen dimensions."""
     global initData
     # Avoid that windows will initialy be placed outside the visible screen
-    screenMaxX, screenMaxY = getScreenSize( root )
+    screenMaxX, screenMaxY = get_screen_size( root )
 
     if initData['winSizeX'] > screenMaxX:   initData['winSizeX'] = screenMaxX
     if initData['winSizeY'] > screenMaxY:   initData['winSizeY'] = screenMaxY
     if initData['winPosX'] < 0:  initData['winPosX'] = 0
     if initData['winPosY'] < 0:  initData['winPosY'] = 0
     if (initData['winPosX'] + initData['winSizeX']) > screenMaxX:   initData['winPosX'] = screenMaxX - initData['winSizeX']
-    if (initData['winPosY'] + initData['winSizeY']) > screenMaxY:   initData['winPosY'] = screenMaxY - initData['winSizeX']
+    if (initData['winPosY'] + initData['winSizeY']) > screenMaxY:   initData['winPosY'] = screenMaxY - initData['winSizeY']
 
 # ------------------------------------------------------------------------------
 # menu bar ---------------------------------------------------------------------
 
-def wmake_menu( root ):
+def wmake_menu( root: tk.Tk ) -> None:
+    """Add a menu bar with File→Exit and a Help menu to the root window."""
     menubar = tk.Menu(root)
     root.config(menu=menubar)
 
@@ -396,7 +415,7 @@ def wmake_menu( root ):
 # ------------------------------------------------------------------------------
 # Status Area ------------------------------------------------------------------
 
-def status_write( text ):            # Use this function to log something to the status area
+def status_write( text: str ) -> None:            # Use this function to log something to the status area
     if not hasattr(status_write, "statusArea" ):
         print(f"Call to 'status_write' with '{text}' but not initialized")
         return
@@ -407,7 +426,8 @@ def status_write( text ):            # Use this function to log something to the
     status_write.statusArea.see(tk.END)
     status_write.statusArea.update()
 
-def wmake_status_area( root ):
+def wmake_status_area( root: tk.Tk ) -> None:
+    """Create a read-only ScrolledText status/log area at the bottom of root and attach it to status_write."""
     statusArea = ScrolledText(root, width=80,  height=6)
     statusArea.pack(padx = 5, pady=5,  fill=tk.BOTH, side=tk.BOTTOM, expand=False)
     statusArea.config(state='normal')
@@ -418,7 +438,8 @@ def wmake_status_area( root ):
 # ------------------------------------------------------------------------------
 # TABs with a Notebook ---------------------------------------------------------
 
-def wmake_tabs( root, tabs ):
+def wmake_tabs( root: tk.Tk, tabs: dict ) -> None:
+    """Create a ttk.Notebook in root with one tab per entry in tabs; store created Frame objects back into tabs."""
     # Create the notebook itself
     notebook = ttk.Notebook(root)
     notebook.pack(pady=4, expand=True, fill='both')
@@ -432,7 +453,8 @@ def wmake_tabs( root, tabs ):
 # ------------------------------------------------------------------------------
 # Search folder ----------------------------------------------------------------
 
-def search_folder_marked(event):
+def search_folder_marked(event: tk.Event) -> None:
+    """Listbox <<ListboxSelect>> callback: update searchFolderMarked with currently selected folder entries."""
     global searchFolderMarked
 
     if not hasattr(search_folder_marked, "listbox"):
@@ -441,7 +463,8 @@ def search_folder_marked(event):
     selection = search_folder_marked.listbox.curselection()
     searchFolderMarked = [search_folder_marked.listbox.get(i) for i in selection]
 
-def search_folder_update():
+def search_folder_update() -> None:
+    """Rebuild the folder listbox from searchFolders, colouring items by their enabled/disabled state."""
     global searchFolders
 
     if not hasattr(search_folder_marked, "listbox"):
@@ -456,7 +479,8 @@ def search_folder_update():
         search_folder_update.listbox.itemconfig(i, { 'bg': colors[searchFolders[item]] } )
         i+=1
 
-def search_folder_add():
+def search_folder_add() -> None:
+    """Open a directory picker and add the chosen folder to searchFolders; refresh the listbox."""
     global searchFolders, searchFolderLast
 
     if not len(searchFolderLast):
@@ -472,25 +496,29 @@ def search_folder_add():
         searchFolderLast = folder
         search_folder_update()
 
-def search_folder_remove():
+def search_folder_remove() -> None:
+    """Remove all entries in searchFolderMarked from searchFolders and refresh the listbox."""
     global searchFolderMarked
     for key in searchFolderMarked:
         x = searchFolders.pop(key, None)
     search_folder_update()
 
-def search_folder_enable():
+def search_folder_enable() -> None:
+    """Set state=1 (enabled) for all folders in searchFolderMarked and refresh the listbox."""
     global searchFolderMarked, searchFolders
     for key in searchFolderMarked:
         searchFolders[key]=1
     search_folder_update()
 
-def search_folder_disable():
+def search_folder_disable() -> None:
+    """Set state=0 (disabled) for all folders in searchFolderMarked and refresh the listbox."""
     global searchFolderMarked, searchFolders
     for key in searchFolderMarked:
         searchFolders[key]=0
     search_folder_update()
 
-def wmake_search_folder( tab ):
+def wmake_search_folder( tab: ttk.Frame ) -> None:
+    """Build the 'Select Folder' tab UI with add/remove/enable/disable buttons and a folder listbox."""
     global searchFolders
     # Create button frame
     butFoldFrame = ttk.Frame( tab )
@@ -522,63 +550,65 @@ exclIgnCase = False
 
 # - - - - - - FILE pattern
 
-def excl_file_not_begin(pat:str, f:str, s:int) -> bool:
-    arr = shlex.split(pat)
-    return not any(f.startswith(x) for x in arr)
+def excl_file_not_begin(tokens: list[str], f: str, s: int) -> bool:
+    """Return True if filename f does NOT start with any quoted token in tokens."""
+    return not any(f.startswith(x) for x in tokens)
 
-def excl_file_not_contain(pat:str, f:str, s:int) -> bool:
-    arr = shlex.split(pat)
-    return not any(x in f for x in arr)
+def excl_file_not_contain(tokens: list[str], f: str, s: int) -> bool:
+    """Return True if filename f does NOT contain any quoted token in tokens."""
+    return not any(x in f for x in tokens)
 
-def excl_file_not_end(pat:str, f:str, s:int) -> bool:
-    arr = shlex.split(pat)
-    return not any(f.endswith(x) for x in arr)
+def excl_file_not_end(tokens: list[str], f: str, s: int) -> bool:
+    """Return True if filename f does NOT end with any quoted token in tokens."""
+    return not any(f.endswith(x) for x in tokens)
 
-def excl_file_begin(pat:str, f:str, s:int) -> bool:
-    arr = shlex.split(pat)
-    return any(f.startswith(x) for x in arr)
+def excl_file_begin(tokens: list[str], f: str, s: int) -> bool:
+    """Return True if filename f starts with any quoted token in tokens."""
+    return any(f.startswith(x) for x in tokens)
 
-def excl_file_contain(pat:str, f:str, s:int) -> bool:
-    arr = shlex.split(pat)
-    return any(x in f for x in arr)
+def excl_file_contain(tokens: list[str], f: str, s: int) -> bool:
+    """Return True if filename f contains any quoted token in tokens."""
+    return any(x in f for x in tokens)
 
-def excl_file_end(pat:str, f:str, s:int) -> bool:
-    arr = shlex.split(pat)
-    return any(f.endswith(x) for x in arr)
+def excl_file_end(tokens: list[str], f: str, s: int) -> bool:
+    """Return True if filename f ends with any quoted token in tokens."""
+    return any(f.endswith(x) for x in tokens)
 
 # - - - - - - FILE size
 
 def excl_size_bigger(pat:str, f:str, s:int) -> bool:
+    """Return True if file size s (bytes) is greater than the integer threshold in pat."""
     return (s > int(pat))
 
 def excl_size_smaller(pat:str, f:str, s:int) -> bool:
+    """Return True if file size s (bytes) is less than the integer threshold in pat."""
     return (s < int(pat))
 
 # - - - - - - DIR pattern
 
-def excl_dir_not_begin(pat:str, p:str) -> bool:
-    arr = shlex.split(pat)
-    return not any(p.startswith(x) for x in arr)
+def excl_dir_not_begin(tokens: list[str], p: str) -> bool:
+    """Return True if directory path p does NOT start with any quoted token in tokens."""
+    return not any(p.startswith(x) for x in tokens)
 
-def excl_dir_not_contain(pat:str, p:str) -> bool:
-    arr = shlex.split(pat)
-    return not any(x in p for x in arr)
+def excl_dir_not_contain(tokens: list[str], p: str) -> bool:
+    """Return True if directory path p does NOT contain any quoted token in tokens."""
+    return not any(x in p for x in tokens)
 
-def excl_dir_not_end(pat:str, p:str) -> bool:
-    arr = shlex.split(pat)
-    return not any(p.endswith(x) for x in arr)
+def excl_dir_not_end(tokens: list[str], p: str) -> bool:
+    """Return True if directory path p does NOT end with any quoted token in tokens."""
+    return not any(p.endswith(x) for x in tokens)
 
-def excl_dir_begin(pat:str, p:str) -> bool:
-    arr = shlex.split(pat)
-    return any(p.startswith(x) for x in arr)
+def excl_dir_begin(tokens: list[str], p: str) -> bool:
+    """Return True if directory path p starts with any quoted token in tokens."""
+    return any(p.startswith(x) for x in tokens)
 
-def excl_dir_contain(pat:str, p:str) -> bool:
-    arr = shlex.split(pat)
-    return any(x in p for x in arr)
+def excl_dir_contain(tokens: list[str], p: str) -> bool:
+    """Return True if directory path p contains any quoted token in tokens."""
+    return any(x in p for x in tokens)
 
-def excl_dir_end(pat:str, p:str) -> bool:
-    arr = shlex.split(pat)
-    return any(p.endswith(x) for x in arr)
+def excl_dir_end(tokens: list[str], p: str) -> bool:
+    """Return True if directory path p ends with any quoted token in tokens."""
+    return any(p.endswith(x) for x in tokens)
 
     # Keep only directories that should NOT be skipped
     # dirnames[:] = [d for d in dirnames if not should_skip(d)]
@@ -609,6 +639,7 @@ exclOptionsDir=[
 
 # This function shall return True if file shall be ignored/excluded
 def excl_filter_file(filename:str, size:int) -> bool:
+    """Return True (exclude file) if filename/size matches any enabled file-exclusion filter rule."""
     global tkv, exclOptionsFile
 
     exclIgnoreCase = tkVars['ExcludeIgnoreCase'].get()
@@ -618,18 +649,21 @@ def excl_filter_file(filename:str, size:int) -> bool:
         if filter[2].get():                 # if filter enabled
             if filter[0] != None:           # if filter function defined
                 if exclIgnoreCase:          # if a filter returns true, exclude file
-                    if filter[0]( filter[3].get().lower(), filename, size ):  return True
+                    tokens = shlex.split(filter[3].get().lower())
+                    if filter[0]( tokens, filename, size ):  return True
                 else:                       # if a filter returns true, exclude file
-                    if filter[0]( filter[3].get(), filename, size ):  return True
+                    tokens = shlex.split(filter[3].get())
+                    if filter[0]( tokens, filename, size ):  return True
 
     return False                            # otherwise keep file -> return False
 
 # This function removes all dirs from dirnames which shall be ignored/excluded
-def excl_filter_dir(dirnames:list):
+def excl_filter_dir(dirnames: list[str]) -> None:
+    """Remove from dirnames in-place all directory names that match any enabled folder-exclusion filter."""
 
     exclIgnoreCase = tkVars['ExcludeIgnoreCase'].get()
 
-    def should_skip( dirname ):
+    def should_skip( dirname: str ) -> bool:
         global exclOptionsDir
 
         if exclIgnoreCase:  dirname = dirname.lower()
@@ -638,17 +672,78 @@ def excl_filter_dir(dirnames:list):
             if filter[2].get():                 # if filter enabled
                 if filter[0] != None:           # if filter function defined
                     if exclIgnoreCase:
-                        if filter[0]( filter[3].get().lower(), dirname ):  return True
+                        tokens = shlex.split(filter[3].get().lower())
+                        if filter[0]( tokens, dirname ):  return True
                     else:                       # if a filter returns true, exclude dir
-                        if filter[0]( filter[3].get(), dirname ):   return True
+                        tokens = shlex.split(filter[3].get())
+                        if filter[0]( tokens, dirname ):   return True
 
         return False                            # otherwise keep dir -> return False
 
     dirnames[:] = [d for d in dirnames if not should_skip(d)]
 
+# Pre-baked filter cache – populated once per scan by excl_build_checks()
+_scan_file_checks: list[Callable[[str, int], bool]] = []
+_scan_dir_checks: list[Callable[[str], bool]] = []
+_scan_ignore_case: bool = False
+
+def excl_build_checks() -> None:
+    """Pre-parse all active filter rules into plain callables once before a scan.
+    Avoids per-file shlex.split() and tkVar.get() calls during os.walk."""
+    global _scan_file_checks, _scan_dir_checks, _scan_ignore_case
+
+    ic = tkVars['ExcludeIgnoreCase'].get()
+    _scan_ignore_case = ic
+
+    def _tokens(raw: str) -> list[str]:
+        try:
+            return shlex.split(raw.lower() if ic else raw)
+        except ValueError:
+            return (raw.lower() if ic else raw).split()
+
+    file_checks: list[Callable[[str, int], bool]] = []
+    for f in exclOptionsFile:
+        if f[2] is not None and f[2].get() and f[0] is not None:
+            toks = _tokens(f[3].get())
+            fn = f[0]
+            file_checks.append(lambda nm, sz, _fn=fn, _t=toks: _fn(_t, nm, sz))
+
+    for f in exclOptionsSize:
+        if f[2] is not None and f[2].get() and f[0] is not None:
+            threshold = int(f[3].get())
+            fn = f[0]
+            file_checks.append(lambda nm, sz, _fn=fn, _th=threshold: _fn(str(_th), nm, sz))
+
+    dir_checks: list[Callable[[str], bool]] = []
+    for f in exclOptionsDir:
+        if f[2] is not None and f[2].get() and f[0] is not None:
+            toks = _tokens(f[3].get())
+            fn = f[0]
+            dir_checks.append(lambda d, _fn=fn, _t=toks: _fn(_t, d))
+
+    _scan_file_checks = file_checks
+    _scan_dir_checks = dir_checks
+
+def excl_filter_file_fast(filename: str, size: int) -> bool:
+    """Fast filter check using pre-baked _scan_file_checks; call excl_build_checks() first."""
+    if _scan_ignore_case:
+        filename = filename.lower()
+    return any(chk(filename, size) for chk in _scan_file_checks)
+
+def excl_filter_dir_fast(dirnames: list[str]) -> None:
+    """Fast in-place dir filter using pre-baked _scan_dir_checks; call excl_build_checks() first."""
+    if not _scan_dir_checks:
+        return
+
+    if _scan_ignore_case:
+        dirnames[:] = [d for d in dirnames if not any(chk(d.lower()) for chk in _scan_dir_checks)]
+    else:
+        dirnames[:] = [d for d in dirnames if not any(chk(d) for chk in _scan_dir_checks)]
+
 # - - - - - - - - - - - - - - -
 
-def wmake_exclude( tab ):
+def wmake_exclude( tab: ttk.Frame ) -> None:
+    """Build the 'Exclude' tab UI with checkboxes and text entries for all file and folder filter rules."""
     global exclOptionsGen, exclOptionsFile, exclOptionsDir
 
     # Create the "ignore case" checkbutton
@@ -699,7 +794,7 @@ def wmake_exclude( tab ):
 # Calc a hash over a file. If file is big then pick only a few parts and build
 # the hash over that. For smaller files build hash over full file content.
 
-def calc_b3_fast(filename, blockSize=131072, blockCount=8):
+def calc_b3_fast(filename: str, blockSize: int = 131072, blockCount: int = 8) -> str | None:
     # Start a new hash calculation
     hasher = blake3()
     # Get size of the file
@@ -743,7 +838,7 @@ def calc_b3_fast(filename, blockSize=131072, blockCount=8):
         try:
             with open(filename, 'rb') as f:
                 while True:
-                    data = f.read(65536)
+                    data = f.read(1 << 20)  # 1 MB chunks reduce syscall overhead
                     if not data:   break
                     hasher.update(data)
             return hasher.hexdigest()
@@ -758,7 +853,7 @@ def calc_b3_fast(filename, blockSize=131072, blockCount=8):
             return None
 
 # Depending on configuration alway calc full hash or part-hash for big files
-def calc_b3_fast_wrap(filename):
+def calc_b3_fast_wrap(filename: str) -> str | None:
     global initData
 
     if tkVars['UseFastHash'].get():
@@ -770,7 +865,7 @@ def calc_b3_fast_wrap(filename):
 
 # Walk through the given folder and it's subfolders and add all files which
 # are not excluded to my database
-def list_files( folder ):
+def list_files( folder: str ) -> None:
     global fileDB, searchStopFlag, searchFileCnt
 
     status_write( f"Search in:{folder}" )
@@ -785,7 +880,7 @@ def list_files( folder ):
     for dirpath, dirnames, filenames in os.walk(folder):
 
         # Exclude dirnames according to specified exclude filters
-        excl_filter_dir(dirnames)
+        excl_filter_dir_fast(dirnames)
 
         # print(f'Current directory: {dirpath}')
         for filename in filenames:
@@ -795,17 +890,21 @@ def list_files( folder ):
                 return
             # Define the FULL path/filename thing for accessing files absolute
             file_path = os.path.join(dirpath, filename)
-            # Links will not be handled but ignored instead
-            if not os.path.isfile( file_path ):   continue
-
-            # Get file size for filters and for file database
-            size_bytes = os.path.getsize(file_path)
+            # Single stat call covers both isfile check and size (saves one syscall per file)
+            try:
+                st = os.stat(file_path)
+            except OSError:
+                continue
+            if not _stat.S_ISREG(st.st_mode):
+                continue
+            size_bytes = st.st_size
             searchFileCnt += 1
 
             # if the exclude filters return True, ignore this file and try next
-            if excl_filter_file(filename, size_bytes):  continue
+            if excl_filter_file_fast(filename, size_bytes):
+                continue
 
-            # every second print the number of files found, yet
+            # every 1 sec print the number of files found, yet
             time_now = time.time()
             if time_now - time_last >= 1.0:
                 list_files.label.config(text=f"Processed: {searchFileCnt:,}")
@@ -845,10 +944,12 @@ def list_files( folder ):
     list_files.label.update()
 
 # Walk over all folders given in FOLDER-TAB and add their files to database
-def list_start():
+def list_start() -> None:
     global searchFolders, searchStopFlag
 
     searchStopFlag = False
+
+    excl_build_checks()     # pre-parse filter rules once before the walk
 
     for folder in searchFolders:
         # if search is disabled, continue with next folder
@@ -865,13 +966,13 @@ def list_start():
         list_update()
 
 # This will be called if STOP button was pressed to interrupt the file addition
-def list_stop():
+def list_stop() -> None:
     global searchStopFlag
     searchStopFlag = True
     status_write( "STOP button pressed!" )
 
 # Walk over the database with ALL files and remove everything which has no duplicates
-def list_cleanup():
+def list_cleanup() -> None:
     global fileDB
     status_write( "Remove single entries ..." )
     groups=0
@@ -887,8 +988,7 @@ def list_cleanup():
             elif len(hash_db) <= 1:         # if 1 or less, no other with same hash
                 del size_db[hashval]
             else:                           # valid hash_db
-                for f in hash_db:           # translate all 'bool' to 'tk.BooleanVar'
-                    b = hash_db[f]          # this is needed for save/restore fileDB
+                for f, b in list(hash_db.items()):   # translate all 'bool' to 'tk.BooleanVar'
                     if isinstance(b, bool):
                         hash_db[f] = tk.BooleanVar(value=b)  # no 'tk.BooleanVar' in JSON
 
@@ -902,7 +1002,7 @@ def list_cleanup():
 
 # Changes the background color of an entry if e.g. clicked by mouse
 
-def list_del_flag_chg(flagObj, flag):
+def list_del_flag_chg(flagObj: tk.BooleanVar, flag: bool) -> None:
     global tree
 
     if flagObj.get() != flag:
@@ -917,7 +1017,8 @@ def list_del_flag_chg(flagObj, flag):
             current_tags.add("col0")
         tree.item(iid, text=boxChar[flag], tags=tuple(current_tags))
 
-def list_update_tree( frame ):
+def list_update_tree( frame: ttk.Frame ) -> None:
+    """Destroy any existing Treeview in frame and rebuild it from fileDB with scrollbars and context menus."""
     global tree, iidDB, fileDB, current_iid
 
     # If the tree already exists, completley destroy it
@@ -951,7 +1052,7 @@ def list_update_tree( frame ):
     tree.tag_configure("col1", background=colorFile[1])
 
     # If clicks with right mouse button then some actions can be taken
-    def menu_action(action):
+    def menu_action(action: str) -> None:
         iid, col = current_iid
         if not iid:  return
         (size,hashval,filename) = iidDB.get(iid,(None,None,None))    # Give False if no such iid key
@@ -981,7 +1082,7 @@ def list_update_tree( frame ):
                 root.clipboard_append(os.path.dirname(filename))
             case "delete":
                 delete_file(filename)
-                list_delete_file_from_DBs(size, hashval, filename)
+                list_delete_file_from_dbs(size, hashval, filename)
 
     # Menu if right-click to CheckBox
     menu0 = tk.Menu(root, tearoff=0)
@@ -1000,7 +1101,7 @@ def list_update_tree( frame ):
     menu1.add_command(label="!Delete immediatly!", command=lambda: menu_action("delete"))
 
     # Helper function for normal/left clicks -> toggle del marker or pick for marking
-    def on_click(event):
+    def on_click(event: tk.Event) -> None:
         global current_iid
 
         iid = tree.identify_row(event.y)
@@ -1034,7 +1135,7 @@ def list_update_tree( frame ):
                 finally:
                     menu1.grab_release()
 
-    def on_double_click(event):
+    def on_double_click(event: tk.Event) -> None:
         global current_iid
 
         iid = tree.identify_row(event.y)
@@ -1080,7 +1181,8 @@ def list_update_tree( frame ):
 
 # Completely rebuild the file list with CheckBoxes in a scrollable frame
 # May need some time on bigger lists or on slow networks if running remote.
-def list_update():
+def list_update() -> None:
+    """Clear and fully rebuild the duplicate-files Treeview inside list_update.frame."""
     global fileDB, tkVars, lastSelectedFile, colorFile
 
     if not hasattr(list_update, "frame"):
@@ -1100,7 +1202,7 @@ def list_update():
 # A single entry in the DB will be deleted here. If last entry or if only one
 # entry left (which shall not be deleted), then remove hash entry, too. If this
 # was last hash, delete also size entry. The file itself will NOT be deleted here.
-def list_delete_file_from_DBs(size, hashval, filename):
+def list_delete_file_from_dbs(size: int, hashval: str, filename: str) -> bool:
     global fileDB, tree
     status_write( f"Delete from DB: {filename}" )
 
@@ -1134,7 +1236,7 @@ def list_delete_file_from_DBs(size, hashval, filename):
 
 # Walk through the whole DB and delete all files marked for to be deleted
 # In a 2nd run delete then all DB entries where file was deleted before
-def list_delete_marked():
+def list_delete_marked() -> None:
     global fileDB
     status_write( "Delete marked!" )
 
@@ -1159,18 +1261,18 @@ def list_delete_marked():
 
     # Now really delete the DB entries to be deleted, do it here to not screw up the loops above
     for size, hashval, filename in toDeleteInDB:
-        list_delete_file_from_DBs(size, hashval, filename)
+        list_delete_file_from_dbs(size, hashval, filename)
 
     # Update the displayed list of duplicate files
     #list_update()
 
 # Debug function to print the content of the DB to console
-def list_show():
+def list_show() -> None:
     global fileDB
     print(fileDB)
 
 # Write the DB into a JSON file
-def list_save():
+def list_save() -> None:
     global fileDB, fileNameData
 
     # Copy my fileDB dict to new dict 'x' and replace tk.BooleanVar with 'bool'
@@ -1187,7 +1289,7 @@ def list_save():
         status_write(f'File/groups are written to file: {fileNameData}')
 
 # Read database from JSON file and put it into my DB, old data in DB will be overwritten
-def list_restore():
+def list_restore() -> None:
     global fileDB, fileNameData
 
     if os.path.exists(fileNameData):
@@ -1195,7 +1297,7 @@ def list_restore():
             try:
                 raw = json.load(f)            # Reads file into a 'raw' Python dict
             except json.JSONDecodeError:
-                print(f"File '{fileNameInit}' contains invalid JSON. Please fix or delete file")
+                print(f"File '{fileNameData}' contains invalid JSON. Please fix or delete file")
                 exit(2)
 
         # Convert the keys of 1st dict layer back to integers as original
@@ -1208,13 +1310,15 @@ def list_restore():
         status_write(f'File/groups file not found: {fileNameData}')
 
 
-def list_clear():
+def list_clear() -> None:
+    """Clear all entries from fileDB and refresh the duplicate list display."""
     global fileDB
     fileDB.clear()
     list_update()
 
 
-def wmake_list( tab ):
+def wmake_list( tab: ttk.Frame ) -> None:
+    """Build the 'Find Dups' tab UI with start/stop/delete/save/restore buttons and the duplicate list frame."""
     # Create button frame
     butSearchFrame = ttk.Frame( tab )
     butSearchFrame.pack(padx = 10, pady=5, side=tk.TOP)
@@ -1263,11 +1367,13 @@ def wmake_list( tab ):
 # ------------------------------------------------------------------------------
 # Mark to delete ---------------------------------------------------------------
 
-def mark_no_files(db, s, flagNot, flagIgCa):
+def mark_no_files(db: dict, s: tk.StringVar | None, flagNot: bool, flagIgCa: bool) -> None:
+    """Clear all deletion marks in hash group db (db: filename → BooleanVar dict)."""
     for k in db:
         list_del_flag_chg( db[k], flagNot )
 
-def mark_length_name(db, s, flagNot, flagIgCa):
+def mark_length_name(db: dict, s: tk.StringVar | None, flagNot: bool, flagIgCa: bool) -> None:
+    """Mark all files in db for deletion except the one with the shortest filename (longest if flagNot)."""
     # 1) get unique lengths in descending order
     L = sorted({len(os.path.basename(k)) for k in db}, reverse=flagNot)
     # 2) give each key its own list
@@ -1282,7 +1388,8 @@ def mark_length_name(db, s, flagNot, flagIgCa):
             flag = True
 
 # ---------------------------------------
-def mark_length_path(db, s, flagNot, flagIgCa):
+def mark_length_path(db: dict, s: tk.StringVar | None, flagNot: bool, flagIgCa: bool) -> None:
+    """Mark all files in db for deletion except the one with the shortest pathname (longest if flagNot)."""
     L = sorted({len(os.path.dirname(k)) for k in db}, reverse=flagNot)
     d2 = {length: [] for length in L}
     for k in db:  d2[len(os.path.dirname(k))].append(k)
@@ -1293,7 +1400,8 @@ def mark_length_path(db, s, flagNot, flagIgCa):
             flag = True
 
 # ---------------------------------------
-def mark_alpha_path(db, s, flagNot, flagIgCa):
+def mark_alpha_path(db: dict, s: tk.StringVar | None, flagNot: bool, flagIgCa: bool) -> None:
+    """Mark all files in db for deletion except the alphabetically first full path (last if flagNot)."""
     d2 = sorted({k for k in db}, reverse=flagNot)
     flag = False
     for k in d2:
@@ -1301,7 +1409,8 @@ def mark_alpha_path(db, s, flagNot, flagIgCa):
         flag = True
 
 # ---------------------------------------
-def mark_on_path(db, s, flagNot, flagIgCa):
+def mark_on_path(db: dict, s: tk.StringVar | None, flagNot: bool, flagIgCa: bool) -> None:
+    """Keep file(s) whose path starts with s.get(); mark the rest. Only acts when both cases exist in db."""
     flag = 0
     # Check if we have  both cases, some in path, some not in path
     for k in db:   flag |= 1 if k.startswith(s.get()) else 2
@@ -1312,7 +1421,8 @@ def mark_on_path(db, s, flagNot, flagIgCa):
             list_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
-def mark_one_word_file(db, s, flagNot, flagIgCa):
+def mark_one_word_file(db: dict, s: tk.StringVar | None, flagNot: bool, flagIgCa: bool) -> None:
+    """Keep files whose filename contains any word from s.get(); mark the rest (flagIgCa=ignore case, flagNot=invert)."""
     flag = 0
     words = s.get().lower().split()  if flagIgCa  else  s.get().split()
     # Check if we have  both cases, some in path, some not in path
@@ -1327,7 +1437,8 @@ def mark_one_word_file(db, s, flagNot, flagIgCa):
             list_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
-def mark_all_words_file(db, s, flagNot, flagIgCa):
+def mark_all_words_file(db: dict, s: tk.StringVar | None, flagNot: bool, flagIgCa: bool) -> None:
+    """Keep files whose filename contains all words from s.get(); mark the rest (flagIgCa=ignore case, flagNot=invert)."""
     flag = 0
     words = s.get().lower().split()  if flagIgCa  else  s.get().split()
     # Check if we have both cases, some in path, some not in path
@@ -1342,7 +1453,8 @@ def mark_all_words_file(db, s, flagNot, flagIgCa):
             list_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
-def mark_one_word_path(db, s, flagNot, flagIgCa):
+def mark_one_word_path(db: dict, s: tk.StringVar | None, flagNot: bool, flagIgCa: bool) -> None:
+    """Keep files whose dirname contains any word from s.get(); mark the rest (flagIgCa=ignore case, flagNot=invert)."""
     flag = 0
     words = s.get().lower().split()  if flagIgCa  else  s.get().split()
     # Check if we have  both cases, some in path, some not in path
@@ -1357,7 +1469,8 @@ def mark_one_word_path(db, s, flagNot, flagIgCa):
             list_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
-def mark_all_words_path(db, s, flagNot, flagIgCa):
+def mark_all_words_path(db: dict, s: tk.StringVar | None, flagNot: bool, flagIgCa: bool) -> None:
+    """Keep files whose dirname contains all words from s.get(); mark the rest (flagIgCa=ignore case, flagNot=invert)."""
     flag = 0
     words = s.get().lower().split()  if flagIgCa  else  s.get().split()
     # Check if we have  both cases, some in path, some not in path
@@ -1372,7 +1485,8 @@ def mark_all_words_path(db, s, flagNot, flagIgCa):
             list_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
-def mark_one_word_pafi(db, s, flagNot, flagIgCa):
+def mark_one_word_pafi(db: dict, s: tk.StringVar | None, flagNot: bool, flagIgCa: bool) -> None:
+    """Keep files whose full path+filename contains any word from s.get(); mark the rest (flagIgCa=ignore case, flagNot=invert)."""
     flag = 0
     words = s.get().lower().split()  if flagIgCa  else  s.get().split()
     # Check if we have  both cases, some in path, some not in path
@@ -1387,7 +1501,8 @@ def mark_one_word_pafi(db, s, flagNot, flagIgCa):
             list_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
-def mark_all_words_pafi(db, s, flagNot, flagIgCa):
+def mark_all_words_pafi(db: dict, s: tk.StringVar | None, flagNot: bool, flagIgCa: bool) -> None:
+    """Keep files whose full path+filename contains all words from s.get(); mark the rest (flagIgCa=ignore case, flagNot=invert)."""
     flag = 0
     words = s.get().lower().split()  if flagIgCa  else  s.get().split()
     # Check if we have  both cases, some in path, some not in path
@@ -1402,7 +1517,8 @@ def mark_all_words_pafi(db, s, flagNot, flagIgCa):
             list_del_flag_chg( db[k], flag )
 
 # ---------------------------------------
-def mark_process( func, sVar, flagCond, flagIgCa ):
+def mark_process( func: Callable, sVar: tk.StringVar | None, flagCond: bool, flagIgCa: bool ) -> None:
+    """Apply marking function func(db, sVar, flagCond, flagIgCa) to every hash group in fileDB."""
     global fileDB
     # Walk over all sizes
     for size in fileDB.keys():
@@ -1412,18 +1528,21 @@ def mark_process( func, sVar, flagCond, flagIgCa ):
             hash_db = size_db[hashval]
             func(hash_db, sVar, flagCond, flagIgCa)
 
-def mark_strings_extract():
+def mark_strings_extract() -> list[str]:
+    """Return a list of current string values from all mark-option entry fields (stored in mark_strings_extract.markOptionVars)."""
     if not hasattr(mark_strings_extract, "markOptionVars"):
         sys.exit("ERROR: Call to 'mark_strings_extract' but not initialized 'markOptionVars'")
 
     values = [ sv.get() for sv in mark_strings_extract.markOptionVars ]
     return values
 
-def mark_strings_restore( svs, values ):
+def mark_strings_restore( svs: list[tk.StringVar], values: list[str] ) -> None:
+    """Restore StringVars svs from a list of values previously captured by mark_strings_extract."""
     for sv, val in zip(svs, values):
         sv.set(val)
 
-def wmake_mark( tab ):
+def wmake_mark( tab: ttk.Frame ) -> None:
+    """Build the 'Mark to delete' tab UI with condition toggles and buttons for all marking strategies."""
     global lastSelectedFile
 
     #    Function to call    , Text to show                                    , strVar, colors     , pick path
@@ -1478,7 +1597,8 @@ def wmake_mark( tab ):
 # ------------------------------------------------------------------------------
 # Settings ---------------------------------------------------------------------
 
-def wmake_settings( tab ):
+def wmake_settings( tab: ttk.Frame ) -> None:
+    """Build the 'Settings' tab UI with all program options (deletion behaviour, hash, preview mosaic, window zoom)."""
     global initData, root
 
     chkbDelEmpFold   = tk_variables_register_and_init('DelEmptyFolder'    , 'bool')
@@ -1540,7 +1660,7 @@ def wmake_settings( tab ):
     label = tk.Label(winsizeFrame, text="Window zoom factor:")
     label.pack(anchor="w", side='left', padx=(8,0), pady=(0,5))
             
-    def on_zoom_change(value):
+    def on_zoom_change(value: str) -> None:
         global root
         factor = float(value)
         print("Faktor:", factor, value)
@@ -1556,7 +1676,7 @@ def wmake_settings( tab ):
     # Create a frame for the PREVIEW - - - - - - - - - - - - - - - - - - - - - -
 
     # helper function to calc fast hash parameters
-    def mosaicUpdate():
+    def mosaic_update() -> None:
         mi = "= Images: " + str(int(previewMosaicX.get()) * int(previewMosaicY.get())) + \
              ",  Total width: " + str(int(previewMosaicX.get()) * int(previewMosaicSize.get()))
         previewMosaicInfo.set(mi)
@@ -1588,32 +1708,32 @@ def wmake_settings( tab ):
     label.pack(anchor="w", side='left', padx=(8,0), pady=(0,5))
 
     spinbox = tk.Spinbox( previewFrame, from_=1, to=10, wrap=True, width=3,
-                          textvariable=previewMosaicX, command=mosaicUpdate )
+                          textvariable=previewMosaicX, command=mosaic_update )
     spinbox.pack(anchor="w", side='left', padx=0, pady=(0,5))
 
     label = tk.Label(previewFrame, text=" rows(Y):")
     label.pack(anchor="w", side='left', padx=(0,0), pady=(0,5))
 
     spinbox = tk.Spinbox( previewFrame, from_=1, to=10, wrap=True, width=3,
-                          textvariable=previewMosaicY, command=mosaicUpdate )
+                          textvariable=previewMosaicY, command=mosaic_update )
     spinbox.pack(anchor="w", side='left', padx=0, pady=(0,5))
 
     label = tk.Label(previewFrame, text="Image width:")
     label.pack(anchor="w", side='left', padx=(16,0), pady=(0,5))
 
     spinbox = tk.Spinbox( previewFrame, from_=128, to=1024, wrap=True, width=3, increment=32,
-                          textvariable=previewMosaicSize, command=mosaicUpdate )
+                          textvariable=previewMosaicSize, command=mosaic_update )
     spinbox.pack(anchor="w", side='left', padx=(2,5), pady=(0,5))
 
     label = tk.Label(previewFrame, textvariable=previewMosaicInfo)
     label.pack(anchor="w", side='left', padx=(8,0), pady=(0,5))
 
-    mosaicUpdate()
+    mosaic_update()
 
     # Create a frame for FAST HASH - - - - - - - - - - - - - - - - - - - - - - -
 
     # helper function to calc fast hash parameters
-    def blockUpdate():
+    def block_update() -> None:
         bs = "(" + humread(1 << (int(blockSize.get()))) + ")"
         bt = " = " + humread(int(blockNum.get()) << (int(blockSize.get())))
         blockSizeHR.set(bs)
@@ -1638,7 +1758,7 @@ def wmake_settings( tab ):
     label.pack(anchor="w", side='left', padx=(25,0), pady=(10,5), fill="x")
 
     spinbox = tk.Spinbox( fastHashFrame, from_=9, to=30, wrap=True, width=3,
-                          textvariable=blockSize, command=blockUpdate )
+                          textvariable=blockSize, command=block_update )
     spinbox.pack(anchor="w", side='left', pady=(10,5), padx=(2,5))
 
     # A helper label to show the selected value in a human readable format
@@ -1651,18 +1771,18 @@ def wmake_settings( tab ):
     label.pack(anchor="w", side='left', padx=0, pady=(10,5), fill="x")
 
     spinbox = tk.Spinbox( fastHashFrame, from_= 3, to=100, wrap=True, width=3,
-        textvariable=blockNum, command=blockUpdate )
+        textvariable=blockNum, command=block_update )
     spinbox.pack(anchor="w", side='left', pady=(10,5), padx=(2,5))
 
     label = tk.Label(fastHashFrame, textvariable=blockTotal)
     label.pack(anchor="w", side='left', padx=0, pady=(10,5), fill="x")
 
-    blockUpdate()
+    block_update()
 
 # ------------------------------------------------------------------------------
 # MAIN -------------------------------------------------------------------------
 
-def main( root ):              # Fill my main windows with life
+def main( root: tk.Tk ) -> None:              # Fill my main windows with life
 
     if sys.version_info < (3, 6):
         sys.exit("ERROR: This script requires Python 3.6 or higher.")
@@ -1708,7 +1828,7 @@ if __name__ == "__main__":
     root.tk.call("tk", "scaling", float(initData['WinZoomFactor']) )
 
     # Save program window information in my init data (to restore on next start)
-    def on_win_change_update():
+    def on_win_change_update() -> None:
         global initData, root
         initData['winSizeX'], initData['winSizeY'], initData['winPosX'], initData['winPosY'] =  \
           [int(p) for p in root.geometry().replace("x","+").split("+")]
@@ -1716,7 +1836,7 @@ if __name__ == "__main__":
 
     # Update my stored root window parameters if root window resized or moved
     afterId = None
-    def on_win_change(event):
+    def on_win_change(event: tk.Event) -> None:
         global afterId, root
         if afterId is not None:
             root.after_cancel(afterId)
