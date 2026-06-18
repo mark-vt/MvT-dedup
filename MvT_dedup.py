@@ -838,7 +838,7 @@ def calc_b3_fast(filename: str, blockSize: int = 131072, blockCount: int = 8) ->
         try:
             with open(filename, 'rb') as f:
                 while True:
-                    data = f.read(1 << 20)  # 1 MB chunks reduce syscall overhead
+                    data = f.read(65536)
                     if not data:   break
                     hasher.update(data)
             return hasher.hexdigest()
