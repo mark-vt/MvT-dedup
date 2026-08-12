@@ -131,8 +131,15 @@ def image_show_in_window(image_path: str, delFlg: bool) -> None:  # PILLOW versi
 
     win = tk.Toplevel(root)
     win.title(image_path)
+
+    # ESC closes window
+    win.bind("<Escape>", lambda event: win.destroy())
+
     # Load picture with PILLOW
     img = Image.open(image_path)
+    # Image proportional to max 1280x800 resize
+    img.thumbnail((1280, 800), Image.Resampling.LANCZOS)
+
     photo = ImageTk.PhotoImage(img)
     label = ttk.Label(win, image=photo)
     label.image = photo  # Referenz halten!
@@ -621,8 +628,8 @@ exclOptionsFile=[
     [excl_file_begin     , "Exclude FILES whose names begin with"       , None, None, colorBlock[2] ],
     [excl_file_contain   , "Exclude FILES whose names contain"          , None, None, colorBlock[2] ],
     [excl_file_end       , "Exclude FILES whose names end with"         , None, None, colorBlock[2] ] ]
-    
-exclOptionsSize=[    
+
+exclOptionsSize=[
     [excl_size_smaller   , "Exclude FILES with size smaller than"       , None, None, colorBlock[3], "bytes" ],
     [excl_size_bigger    , "Exclude FILES with size bigger than"        , None, None, colorBlock[3], "bytes" ] ]
 
@@ -786,7 +793,7 @@ def wmake_exclude( tab: ttk.Frame ) -> None:
         entry = tk.Entry(frameL, textvariable=exOpt[3], font='TkFixedFont', bg=exOpt[4] )
         entry.pack(side='left', padx=(2,4), fill='x', expand=True)
         if len(exOpt) > 5 and exOpt[5] is not None:
-            tk.Label( frameL, text=exOpt[5] ).pack(side='left', padx=(0,8) )   
+            tk.Label( frameL, text=exOpt[5] ).pack(side='left', padx=(0,8) )
 
 # ------------------------------------------------------------------------------
 # Search tab -------------------------------------------------------------------
@@ -1608,7 +1615,7 @@ def wmake_settings( tab: ttk.Frame ) -> None:
     chkbSaveMarkTxt  = tk_variables_register_and_init('SaveMarkTexts'     , 'bool')
     chkbSaveFileDB   = tk_variables_register_and_init('SaveFileDB'        , 'bool')
     chkbDelPreview   = tk_variables_register_and_init('DelPreviewOnClose' , 'bool')
-    
+
     slideWinZoom     = tk_variables_register_and_init('WinZoomFactor'     , 'double')
 
     chkbUseFastHash  = tk_variables_register_and_init('UseFastHash'       , 'bool')
@@ -1630,7 +1637,7 @@ def wmake_settings( tab: ttk.Frame ) -> None:
     sf.pack(fill='both', pady=(0,0), expand=True)
     sfSettings = sf.scrollable_frame
 
-    # Create single-button settings - - - - - - - - - - - - - - - - - - - - - - 
+    # Create single-button settings - - - - - - - - - - - - - - - - - - - - - -
 
     tk.Checkbutton(sfSettings, text="Delete folder if they become empty by file removement",
         variable=chkbDelEmpFold ).pack(anchor="w", side='top', pady=(16,16) )
@@ -1651,15 +1658,15 @@ def wmake_settings( tab: ttk.Frame ) -> None:
         variable=chkbSaveFileDB ).pack(anchor="w", side='top', pady=(0,16) )
 
     # Create Zoom-Slider for WINDOW SIZE - - - - - - - - - - - - - - - - - - - -
-            
+
     winsizeFrame = ttk.Frame( sfSettings )
     winsizeFrame.pack(anchor="w", side='top', fill="x", padx=(4,8), pady=4)
     winsizeFrame['borderwidth'] = 2
     winsizeFrame['relief'] = 'ridge'
-            
+
     label = tk.Label(winsizeFrame, text="Window zoom factor:")
     label.pack(anchor="w", side='left', padx=(8,0), pady=(0,5))
-            
+
     def on_zoom_change(value: str) -> None:
         global root
         factor = float(value)
@@ -1668,11 +1675,11 @@ def wmake_settings( tab: ttk.Frame ) -> None:
 
     scale = tk.Scale( winsizeFrame, from_=0.5, to=3.0, resolution=0.1, orient="horizontal",
                       variable=slideWinZoom, command=on_zoom_change )
-    scale.pack(anchor="w", side='left', padx=(8,0), pady=(0,5) )        
+    scale.pack(anchor="w", side='left', padx=(8,0), pady=(0,5) )
 
     label = tk.Label(winsizeFrame, text="(becomes active after rebooting this program)")
     label.pack(anchor="w", side='left', padx=(8,0), pady=(0,5))
-            
+
     # Create a frame for the PREVIEW - - - - - - - - - - - - - - - - - - - - - -
 
     # helper function to calc fast hash parameters
@@ -1821,7 +1828,7 @@ if __name__ == "__main__":
 
     # Create my root window (main windows) -------------------------------------
     root = tk.Tk()
-    
+
     # Check data from e.g. *.ini file or defaults for consistency, root is needed
     init_win_geo_data_check( root )
 
