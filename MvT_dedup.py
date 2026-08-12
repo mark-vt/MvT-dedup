@@ -17,6 +17,7 @@ import subprocess
 from blake3 import blake3
 from send2trash import send2trash
 from PIL import Image, ImageTk, UnidentifiedImageError   # Pillow, for images
+import imagehash
 
 # Includes for GUI stuff
 import tkinter as tk
@@ -27,6 +28,9 @@ from tkinter.scrolledtext import ScrolledText
 from tkinter import filedialog
 from typing import Callable
 import stat as _stat
+
+from MvT_previewTiles import MvT_preview_tiles
+from MvT_movieInfo import MvT_movie_info
 
 # ------------------------------------------------------------------------------
 # Global Variables -------------------------------------------------------------
@@ -56,6 +60,10 @@ searchFolderLast = ""
 searchFolderMarked = []
 # used to stop search process by user
 searchStopFlag = False
+# used to stop movie-info processing by user
+infoStopFlag = False
+# used to stop similar-movie discovery by user
+simiStopFlag = False
 
 # holds name of last selected file in find tab
 lastSelectedFile = ""
@@ -84,12 +92,20 @@ fileNameData = f'{scriptPathFile}.dat'
 # Files with these extensions will be handled as video
 extensionMovie = '".mp4" ".mpg" ".mpeg" ".avi" ".mkv" ".flv" ".wmv"'
 
+tileQuality = 4
+
+movieInfoTileDB = "MvT_DB"
+
+def is_pure_folder_name(folder_name: str) -> bool:
+    """Return True when folder_name is a single valid folder component."""
+    return bool(folder_name) and folder_name not in (".", "..") and not any(
+        separator in folder_name for separator in ("/", "\\", ":")
+    )
+
 # ------------------------------------------------------------------------------
 # helper -----------------------------------------------------------------------
 
 # Run command and return output ------------------
-
-from MvT_previewTiles import MvT_preview_tiles
 
 def is_probably_picture_file(pathfile: str) -> bool:
     """Try to open pathfile as an image; return True if valid, False otherwise."""
@@ -180,7 +196,7 @@ def show_preview_win( pathfile: str ) -> None:
                                      int(tkVars['PrvwMosX'].get() ),
                                      int(tkVars['PrvwMosY'].get() ),
                                      int(tkVars['PrvwMosS'].get() ),
-                                     4, outFile):
+                                     tileQuality, outFile):
                 print("Seems not to be a valid video:", pathfile)
                 return
             if tkVars['DelPreviewOnClose'].get():
@@ -371,6 +387,9 @@ def init_data_load() -> None:
                  'PrvwMosS'          : "320",
                  'PrvwMosT'          : "jpg",
                  'PrvwMosFilm'       : extensionMovie,
+                 'MovieInfoTileDB'   : movieInfoTileDB,
+                 'SimiThreshold'     : 0.90,
+                 'SimiTimeWindow'    : 11,
                  'WinZoomFactor'     : 1.0
                }
 
@@ -1602,11 +1621,412 @@ def wmake_mark( tab: ttk.Frame ) -> None:
         but.config( command=lambda f=maOpt[0], s=maOpt[2]: mark_process(f,s,chkbCond.get(),chkbIgCa.get()) )
 
 # ------------------------------------------------------------------------------
+# Create json info and movie tile sheets for every movie -----------------------
+
+def info_stop() -> None:
+    """Request that movie-info processing stops after the current operation."""
+    global infoStopFlag
+    infoStopFlag = True
+
+def info_show_result(movie_info: dict, tile_path: str) -> None:
+    """Replace the INFO tab contents with the latest JSON data and tile image."""
+    if not hasattr(info_show_result, "frame_json"):
+        return
+
+    # Remove the previous movie's widgets before displaying the new result.
+    for widget in info_show_result.frame_json.winfo_children():
+        widget.destroy()
+    for widget in info_show_result.frame_tile.winfo_children():
+        widget.destroy()
+
+    json_view = ScrolledText(info_show_result.frame_json, wrap=tk.NONE)
+    json_view.pack(fill=tk.BOTH, expand=True)
+    json_view.insert(tk.END, json.dumps(movie_info, indent=2, ensure_ascii=False))
+    json_view.configure(state=tk.DISABLED)
+
+    # Copy the image while the file is open so the label owns independent data.
+    with Image.open(tile_path) as tile_image:
+        photo = ImageTk.PhotoImage(tile_image.copy())
+    tile_view = ttk.Label(info_show_result.frame_tile, image=photo)
+    tile_view.image = photo
+    tile_view.pack(fill=tk.BOTH, expand=True)
+
+    # Let Tk paint the new result before processing the next movie.
+    info_show_result.frame_json.update_idletasks()
+    info_show_result.frame_tile.update_idletasks()
+
+def info_parse_folder(folder: str) -> None:
+    """Process a single search folder for movie text and tile information."""
+    global infoStopFlag
+
+    # Walk through the folder tree and do not scan generated MvT_DB files.
+    for dirpath, dirnames, filenames in os.walk(folder):
+        if infoStopFlag:
+            return
+
+        dirnames[:] = [dirname for dirname in dirnames if dirname != movieInfoTileDB]
+
+        for filename in filenames:
+            if infoStopFlag:
+                return
+
+            # Only process extensions enabled in the Settings tab.
+            movie_extensions = {
+                part.strip('"').lower()
+                for part in tkVars['PrvwMosFilm'].get().split()
+            }
+            if os.path.splitext(filename)[1].lower() not in movie_extensions:
+                continue
+
+            movie_path = os.path.join(dirpath, filename)
+            output_dir = os.path.join(dirpath, movieInfoTileDB)
+            movie_name = os.path.splitext(filename)[0]
+            tile_extension = tkVars['PrvwMosT'].get().lower().lstrip('.')
+            tile_path = os.path.join(output_dir, f"{movie_name}.{tile_extension}")
+            info_path = os.path.join(output_dir, f"{movie_name}.json")
+
+            # Create both derived files beside the source movie in MvT_DB.
+            os.makedirs(output_dir, exist_ok=True)
+            if hasattr(info_parse_folder, "processing_label"):
+                info_parse_folder.processing_label.config(
+                    text=f"Processing: {filename}"
+                )
+                info_parse_folder.processing_label.update_idletasks()
+            status_write(f"Create movie info: {movie_path}")
+
+            try:
+                # Reuse both generated files when the recorded source size is unchanged.
+                if os.path.exists(info_path) and os.path.exists(tile_path):
+                    with open(info_path, "r", encoding="utf-8") as info_file:
+                        cached_movie_info = json.load(info_file)
+                    cached_size = cached_movie_info.get("format", {}).get("size")
+                    if cached_size == os.path.getsize(movie_path):
+                        status_write(f"Movie info unchanged: {movie_path}")
+                        continue
+
+                movie_info = MvT_movie_info(movie_path)
+                with open(info_path, "w", encoding="utf-8") as info_file:
+                    json.dump(movie_info, info_file, indent=2)
+
+                MvT_preview_tiles(
+                    movie_path,
+                    int(tkVars['PrvwMosX'].get()),
+                    int(tkVars['PrvwMosY'].get()),
+                    int(tkVars['PrvwMosS'].get()),
+                    tileQuality, tile_path )
+                info_show_result(movie_info, tile_path)
+            except (OSError, subprocess.SubprocessError, ValueError) as error:
+                status_write(f"Could not process {movie_path}: {error}")
+
+def info_parse_folders() -> None:
+    """Process enabled search folders for movie text and tile information."""
+    global searchFolders, infoStopFlag
+
+    infoStopFlag = False
+
+    for folder in searchFolders:
+        # Skip folders disabled in the Select Folder tab.
+        if searchFolders[folder] == 0:
+            continue
+
+        info_parse_folder(folder)
+
+    if infoStopFlag:
+        status_write("Movie-info processing stopped by user!")
+    else:
+        status_write("Movie-info processing done!")
+
+def wmake_info( tab: ttk.Frame ) -> None:
+    """Build the 'Create info' tab UI for creating JSON info and movie tile sheets."""
+
+    # Keep the action button above the two working areas.
+    action_frame = ttk.Frame(tab)
+    action_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+
+    create_info_button = tk.Button(
+        action_frame,
+        text="Create text and tile info files",
+        command=info_parse_folders,
+        bg=colorButt[0],
+    )
+    create_info_button.pack(side=tk.LEFT)
+
+    stop_info_button = tk.Button(
+        action_frame,
+        text="STOP",
+        command=info_stop,
+        bg=colorButt[1],
+    )
+    stop_info_button.pack(side=tk.LEFT, padx=(5, 0))
+
+    processing_label = tk.Label(action_frame, text="Processing: ")
+    processing_label.pack(side=tk.LEFT, padx=(10, 0))
+    info_parse_folder.processing_label = processing_label
+
+    # Give the left work area three quarters of the available width and the
+    # right work area the remaining quarter.
+    content_frame = ttk.Frame(tab)
+    content_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
+    content_frame.columnconfigure(0, weight=3)
+    content_frame.columnconfigure(1, weight=1)
+    content_frame.rowconfigure(0, weight=1)
+
+    frame_tile = ttk.Frame(content_frame, relief=tk.GROOVE, borderwidth=1)
+    frame_tile.grid(row=0, column=0, sticky="nsew", padx=(0, 3))
+    frame_json = ttk.Frame(content_frame, relief=tk.GROOVE, borderwidth=1)
+    frame_json.grid(row=0, column=1, sticky="nsew", padx=(3, 0))
+
+    # Keep the display frames available to the processing callback.
+    info_show_result.frame_tile = frame_tile
+    info_show_result.frame_json = frame_json
+
+
+def wmake_simi( tab: ttk.Frame ) -> None:
+    """Build the duration-filtered and tile-similarity review tab."""
+    global simiStopFlag
+
+    simiStopFlag = False
+    simi_state = {
+        "pairs": [],
+        "pair_index": 0,
+        "panes": [],
+    }
+
+    def movie_duration(movie: dict) -> float | None:
+        """Return the movie duration in seconds from its JSON metadata."""
+        duration = movie["info"].get("format", {}).get("duration")
+        try:
+            return float(duration) if duration is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def tile_similarity(first_path: str, second_path: str) -> float:
+        """Return perceptual-hash similarity from 0.00 to 1.00."""
+        with Image.open(first_path) as first_image, Image.open(second_path) as second_image:
+            try:
+                first_hash = imagehash.phash(first_image, hash_size=8)
+                second_hash = imagehash.phash(second_image, hash_size=8)
+            except (ImportError, ValueError):
+                # Some Linux distributions ship SciPy built for an incompatible NumPy.
+                # dhash provides a SciPy-free perceptual fallback in that environment.
+                first_hash = imagehash.dhash(first_image, hash_size=8)
+                second_hash = imagehash.dhash(second_image, hash_size=8)
+                print("Warning: SciPy not available or incompatible; using dhash instead of phash for tile similarity.")
+        return max(0.0, min(1.0, 1.0 - (first_hash - second_hash) / first_hash.hash.size))
+
+    def movie_summary(movie: dict) -> str:
+        video = movie["info"].get("video", {})
+        width = video.get("width") or "?"
+        height = video.get("height") or "?"
+        fps = video.get("fps") or "?"
+        codec = video.get("codec_name") or "?"
+        bit_rate = video.get("bit_rate")
+        mbit_rate = f"{bit_rate / 1_000_000:.2f}" if bit_rate else "?"
+        duration = movie_duration(movie)
+        duration_text = f"{duration:.1f}s" if duration is not None else "?s"
+        return f"{duration_text}  |  {width}x{height}  |  {fps} fps  |  {codec.upper()}  |  {mbit_rate} MBit/s"
+
+    def show_movie(pane: dict, movie: dict | None, similarity: float | None) -> None:
+        for widget in pane["tile_frame"].winfo_children():
+            widget.destroy()
+        for widget in pane["json_frame"].winfo_children():
+            widget.destroy()
+
+        if movie is None:
+            pane["title"].config(text="No matching movie")
+            image_area = tk.Frame(pane["tile_frame"], bg="#808080", height=500)
+            image_area.pack(fill=tk.BOTH, expand=True)
+            image_area.pack_propagate(False)
+            tk.Label(
+                image_area,
+                text="No matching movie",
+                bg="#808080",
+                fg="white",
+            ).pack(expand=True)
+            return
+
+        summary = movie_summary(movie)
+        if similarity is not None:
+            summary += f"  |  similarity: {similarity:.2f}"
+        ttk.Label(
+            pane["tile_frame"],
+            text=summary,
+            font=("TkDefaultFont", 10, "bold"),
+        ).pack(fill=tk.X, padx=4, pady=4)
+
+        # Pack the summary first so the expanding image area cannot cover it.
+        image_area = tk.Frame(pane["tile_frame"], bg="#808080", height=500)
+        image_area.pack(fill=tk.BOTH, expand=True)
+        image_area.pack_propagate(False)
+
+        with Image.open(movie["tile_path"]) as tile_image:
+            tile_copy = tile_image.copy()
+        image_area.update_idletasks()
+        available_width = max(1, image_area.winfo_width() - 8)
+        available_height = max(1, image_area.winfo_height() - 8)
+        tile_copy.thumbnail((available_width, available_height))
+        photo = ImageTk.PhotoImage(tile_copy)
+        tile_label = tk.Label(image_area, image=photo, bg="#808080", borderwidth=0)
+        tile_label.image = photo
+        tile_label.pack(expand=True)
+
+        json_view = ScrolledText(
+            pane["json_frame"], wrap=tk.NONE, font=("TkDefaultFont", 8), height=5
+        )
+        json_view.pack(fill=tk.BOTH, expand=True)
+        json_view.insert(tk.END, json.dumps(movie["info"], indent=2, ensure_ascii=False))
+        json_view.configure(state=tk.DISABLED)
+        pane["title"].config(text=os.path.basename(movie["movie_path"]))
+
+    def display_pair() -> None:
+        if not simi_state["pairs"]:
+            for pane in simi_state["panes"]:
+                show_movie(pane, None, None)
+            return
+        pair = simi_state["pairs"][simi_state["pair_index"]]
+        for index, pane in enumerate(simi_state["panes"]):
+            show_movie(pane, pair[index], pair[2])
+
+    def find_similar_movies() -> None:
+        global simiStopFlag
+
+        simiStopFlag = False
+        movies = []
+        movie_extensions = {
+            part.strip('"').lower() for part in tkVars['PrvwMosFilm'].get().split()
+        }
+
+        # Read all usable movie metadata, then sort it by duration for efficient matching.
+        for folder in searchFolders:
+            if searchFolders[folder] == 0:
+                continue
+            for dirpath, dirnames, filenames in os.walk(folder):
+                if simiStopFlag:
+                    return
+                dirnames[:] = [dirname for dirname in dirnames if dirname != movieInfoTileDB]
+                for filename in filenames:
+                    if simiStopFlag:
+                        return
+                    if os.path.splitext(filename)[1].lower() not in movie_extensions:
+                        continue
+                    movie_path = os.path.join(dirpath, filename)
+                    output_dir = os.path.join(dirpath, movieInfoTileDB)
+                    movie_name = os.path.splitext(filename)[0]
+                    info_path = os.path.join(output_dir, f"{movie_name}.json")
+                    tile_extension = tkVars['PrvwMosT'].get().lower().lstrip('.')
+                    tile_path = os.path.join(output_dir, f"{movie_name}.{tile_extension}")
+                    if not os.path.exists(info_path) or not os.path.exists(tile_path):
+                        continue
+                    try:
+                        with open(info_path, "r", encoding="utf-8") as info_file:
+                            movie_info = json.load(info_file)
+                    except (OSError, json.JSONDecodeError):
+                        continue
+                    movie = {
+                        "movie_path": movie_path,
+                        "info_path": info_path,
+                        "info": movie_info,
+                        "tile_path": tile_path,
+                    }
+                    if movie_duration(movie) is not None:
+                        movies.append(movie)
+
+        movies.sort(key=lambda movie: movie_duration(movie))
+        time_window = float(tkVars["SimiTimeWindow"].get())
+        threshold = float(tkVars["SimiThreshold"].get())
+        pairs = []
+
+        # Compare only duration-near movies and offer pairs meeting the threshold.
+        for first_index, first_movie in enumerate(movies):
+            first_duration = movie_duration(first_movie)
+            for second_movie in movies[first_index + 1:]:
+                second_duration = movie_duration(second_movie)
+                if second_duration - first_duration > time_window:
+                    break
+                if simiStopFlag:
+                    return
+                try:
+                    similarity = tile_similarity(first_movie["tile_path"], second_movie["tile_path"])
+                except OSError:
+                    continue
+                if similarity >= threshold:
+                    pairs.append((first_movie, second_movie, similarity))
+
+        simi_state["pairs"] = pairs
+        simi_state["pair_index"] = 0
+        display_pair()
+        status_write(f"Found {len(pairs)} similar movie pairs")
+
+    def simi_stop() -> None:
+        global simiStopFlag
+        simiStopFlag = True
+
+    def delete_movie(pane_index: int) -> None:
+        if not simi_state["pairs"]:
+            return
+        pair = simi_state["pairs"][simi_state["pair_index"]]
+        movie = pair[pane_index]
+        for path in (movie["movie_path"], movie["info_path"], movie["tile_path"]):
+            if os.path.exists(path):
+                delete_file(path)
+        simi_state["pairs"] = [
+            candidate for candidate in simi_state["pairs"]
+            if movie not in candidate[:2]
+        ]
+        simi_state["pair_index"] = min(
+            simi_state["pair_index"], max(0, len(simi_state["pairs"]) - 1)
+        )
+        display_pair()
+
+    def move_pair(offset: int) -> None:
+        if simi_state["pairs"]:
+            simi_state["pair_index"] = max(
+                0,
+                min(
+                    simi_state["pair_index"] + offset,
+                    len(simi_state["pairs"]) - 1,
+                ),
+            )
+            display_pair()
+
+    # Place the discovery and cancellation controls above the two movie panes.
+    action_frame = ttk.Frame(tab)
+    action_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+    tk.Button(action_frame, text="Find similar movies", command=find_similar_movies, bg=colorButt[0]).pack(side=tk.LEFT)
+    tk.Button(action_frame, text="STOP", command=simi_stop, bg=colorButt[1]).pack(side=tk.LEFT, padx=(5, 0))
+
+    content_frame = ttk.Frame(tab)
+    content_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
+    content_frame.columnconfigure(0, weight=1)
+    content_frame.columnconfigure(1, weight=1)
+    content_frame.rowconfigure(0, weight=1)
+
+    # Build two equal panes, each with tile, metadata, and navigation controls.
+    for pane_index in range(2):
+        pane_frame = ttk.Frame(content_frame, relief=tk.GROOVE, borderwidth=1)
+        pane_frame.grid(row=0, column=pane_index, sticky="nsew", padx=3)
+        pane_frame.rowconfigure(1, weight=3)
+        pane_frame.rowconfigure(2, weight=2)
+        pane_frame.columnconfigure(0, weight=1)
+        title = ttk.Label(pane_frame, text="No movie selected")
+        title.grid(row=0, column=0, sticky="ew", padx=4, pady=4)
+        tile_frame = ttk.Frame(pane_frame)
+        tile_frame.grid(row=1, column=0, sticky="nsew")
+        json_frame = ttk.Frame(pane_frame)
+        json_frame.grid(row=2, column=0, sticky="nsew")
+        controls = ttk.Frame(pane_frame)
+        controls.grid(row=3, column=0, sticky="ew", padx=4, pady=4)
+        tk.Button(controls, text="Delete", command=lambda i=pane_index: delete_movie(i), bg="#ff9999").pack(side=tk.LEFT)
+        tk.Button(controls, text="Prev", command=lambda: move_pair(-1), bg="#99ccff").pack(side=tk.RIGHT, padx=2)
+        tk.Button(controls, text="Next", command=lambda: move_pair(1), bg="#99ccff").pack(side=tk.RIGHT, padx=2)
+        simi_state["panes"].append({"title": title, "tile_frame": tile_frame, "json_frame": json_frame})
+
+# ------------------------------------------------------------------------------
 # Settings ---------------------------------------------------------------------
 
 def wmake_settings( tab: ttk.Frame ) -> None:
     """Build the 'Settings' tab UI with all program options (deletion behaviour, hash, preview mosaic, window zoom)."""
-    global initData, root
+    global initData, root, movieInfoTileDB
 
     chkbDelEmpFold   = tk_variables_register_and_init('DelEmptyFolder'    , 'bool')
     chkbDel2Trash    = tk_variables_register_and_init('DeleteToTrash'     , 'bool')
@@ -1631,6 +2051,24 @@ def wmake_settings( tab: ttk.Frame ) -> None:
     previewMosaicInfo= tk_variables_register_and_init('PrvwMosI'       , 'string')
     previewMosaicType= tk_variables_register_and_init('PrvwMosT'       , 'string')
     previewMosaicFilm= tk_variables_register_and_init('PrvwMosFilm'    , 'string')
+    movie_info_tile_db = tk_variables_register_and_init('MovieInfoTileDB', 'string')
+    similarityThreshold = tk_variables_register_and_init('SimiThreshold', 'double')
+    similarity_time_window = tk_variables_register_and_init('SimiTimeWindow', 'integer')
+
+    if is_pure_folder_name(movie_info_tile_db.get()):
+        movieInfoTileDB = movie_info_tile_db.get()
+    else:
+        movie_info_tile_db.set(movieInfoTileDB)
+
+    def movie_info_tile_db_changed(*args: str) -> None:
+        global movieInfoTileDB
+        value = movie_info_tile_db.get().strip()
+        if is_pure_folder_name(value):
+            movieInfoTileDB = value
+        elif value != movieInfoTileDB:
+            movie_info_tile_db.set(movieInfoTileDB)
+
+    movie_info_tile_db.trace_add("write", movie_info_tile_db_changed)
 
     # Create a scrollable frame to hold all the settings - - - - - - - - - - - -
     sf = ScrollableFrame( tab )
@@ -1693,8 +2131,10 @@ def wmake_settings( tab: ttk.Frame ) -> None:
     previewFrame['borderwidth'] = 2
     previewFrame['relief'] = 'ridge'
 
-    label = tk.Label(previewFrame, text="Video preview:")
-    label.pack(anchor="n", side='top', padx=(4,0), pady=0)
+    label = tk.Label(
+        previewFrame, text="Video Preview", font=("TkDefaultFont", 10, "bold")
+    )
+    label.pack(anchor="n", side='top', fill="x", padx=(4,0), pady=0)
 
     tk.Checkbutton(previewFrame, text="Delete generated video preview file if preview window closed",
         variable=chkbDelPreview ).pack(anchor="w", side='top', pady=4 )
@@ -1752,8 +2192,12 @@ def wmake_settings( tab: ttk.Frame ) -> None:
     fastHashFrame['borderwidth'] = 2
     fastHashFrame['relief'] = 'ridge'
 
-    label = tk.Label(fastHashFrame, text="Fast hash (compare files):")
-    label.pack(anchor="n", side='top', padx=(4,0), pady=0)
+    label = tk.Label(
+        fastHashFrame,
+        text="Fast hash (compare files)",
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    label.pack(anchor="n", side='top', fill="x", padx=(4,0), pady=0)
 
     tk.Checkbutton(fastHashFrame, text="Very safe mode: calculate also FULL hash if fast hash says 'equal' (makes only sense with ☑ below)",
         variable=chkbUseFastHashFull ).pack(anchor="w", side='top', pady=(4,0) )
@@ -1786,6 +2230,69 @@ def wmake_settings( tab: ttk.Frame ) -> None:
 
     block_update()
 
+    # Configure the similarity threshold as a percentage and expose 0.00..1.00 to the application.
+    similarity_percent = tk.DoubleVar(value=similarityThreshold.get() * 100)
+    similarity_display = tk.StringVar()
+
+    def similarity_update(value: str) -> None:
+        normalized_value = max(0.0, min(1.0, float(value) / 100.0))
+        similarityThreshold.set(normalized_value)
+        similarity_display.set(f"{normalized_value:.2f}")
+
+    similarity_frame = ttk.Frame(sfSettings)
+    similarity_frame.pack(anchor="w", side="top", fill="x", padx=(4, 8), pady=4)
+    similarity_frame["borderwidth"] = 2
+    similarity_frame["relief"] = "ridge"
+
+    tk.Label(
+        similarity_frame, text="Similarity Parameters", font=("TkDefaultFont", 10, "bold")
+    ).pack(anchor="n", fill="x", padx=8, pady=(5, 2))
+
+    movie_info_frame = tk.Frame(similarity_frame)
+    movie_info_frame.pack(fill="x", padx=8, pady=(2, 5))
+    tk.Label(movie_info_frame, text="Movie info folder:").pack(side="left")
+    tk.Entry(
+        movie_info_frame,
+        textvariable=movie_info_tile_db,
+        width=20,
+    ).pack(side="left", padx=(8, 0), fill="x", expand=True)
+
+    tk.Label(similarity_frame, text="Similarity threshold (0..100):").pack(
+        anchor="w", side="left", padx=(8, 0), pady=5
+    )
+    similarity_scale = tk.Scale(
+        similarity_frame,
+        from_=0,
+        to=100,
+        resolution=1,
+        orient="horizontal",
+        variable=similarity_percent,
+        command=similarity_update,
+        showvalue=True,
+    )
+    similarity_scale.pack(anchor="w", side="left", fill="x", expand=True, padx=8, pady=5)
+    tk.Label(similarity_frame, text="value:").pack(side="left", padx=(4, 0), pady=5)
+    tk.Label(similarity_frame, textvariable=similarity_display, width=4).pack(
+        side="left", padx=(2, 8), pady=5
+    )
+    similarity_update(str(similarity_percent.get()))
+
+    tk.Label(similarity_frame, text="Duration difference (seconds):").pack(
+        anchor="w", side="left", padx=(8, 0), pady=5
+    )
+    time_window_scale = tk.Scale(
+        similarity_frame,
+        from_=1,
+        to=1000,
+        resolution=1,
+        orient="horizontal",
+        variable=similarity_time_window,
+        showvalue=True,
+    )
+    time_window_scale.pack(
+        anchor="w", side="left", fill="x", expand=True, padx=8, pady=5
+    )
+
 # ------------------------------------------------------------------------------
 # MAIN -------------------------------------------------------------------------
 
@@ -1802,17 +2309,17 @@ def main( root: tk.Tk ) -> None:              # Fill my main windows with life
              'EXCL' : [' Exclude from selection ', None ],
              'FIND' : [' Find Dups ', None ],
              'MARK' : [' Mark to delete ', None ],
+             'INFO' : [' Create movie info ', None ],
+             'SIMI' : [' Find similar movies ', None ],
              'PARM' : [' Settings ', None ] }
     wmake_tabs( root, tabs )
 
     wmake_search_folder( tabs['FOLD'][1] )
-
     wmake_exclude( tabs['EXCL'][1] )
-
     wmake_list( tabs['FIND'][1] )
-
     wmake_mark( tabs['MARK'][1] )
-
+    wmake_info( tabs['INFO'][1] )
+    wmake_simi( tabs['SIMI'][1] )
     wmake_settings( tabs['PARM'][1] )
 
 # ------------------------------------------------------------------------------

@@ -12,7 +12,18 @@ from pathlib import Path
 # --------------------------------- CODE ---------------------------------------
 
 def _check_mp4_faststart(pathfile):
+    """Inspect MP4/MOV boxes to determine whether the file is faststart-ready.
 
+    Args:
+        pathfile: Path to the media file to inspect.
+
+    Returns:
+        A dictionary containing the faststart flag, status, reason, file size,
+        and the boxes inspected. The flag is ``None`` when the result is
+        unknown or the container is unsupported.
+    """
+
+    # Read the file header and determine its size before scanning boxes.
     with Path(pathfile).open("rb") as f:
         f.seek(0, 2)
         file_size = f.tell()
@@ -21,6 +32,7 @@ def _check_mp4_faststart(pathfile):
         boxes = []
         saw_ftyp = False
 
+        # Parse ISO Base Media File Format boxes until moov or mdat is found.
         while f.tell() + 8 <= file_size:
             offset = f.tell()
             header = f.read(8)
@@ -80,6 +92,7 @@ def _check_mp4_faststart(pathfile):
             }
 
             if box_type == "ftyp":
+                # Capture the file type and compatible brands for diagnostics.
                 saw_ftyp = True
 
                 if size >= 16:
@@ -164,6 +177,17 @@ def _check_mp4_faststart(pathfile):
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 def _run_ffprobe(pathfile, count_frames=False):
+    """Run ffprobe and return selected stream and format metadata.
+
+    Args:
+        pathfile: Path to the media file to inspect.
+        count_frames: Whether ffprobe should count frames while probing.
+
+    Returns:
+        The parsed JSON object produced by ffprobe.
+    """
+
+    # Build one ffprobe request containing all metadata needed by the caller.
     cmd = [
         "ffprobe",
         "-v", "error",
@@ -192,6 +216,15 @@ def _run_ffprobe(pathfile, count_frames=False):
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 def _parse_fraction(value):
+    """Convert a fraction string to a floating-point number.
+
+    Args:
+        value: A fraction such as ``"24000/1001"`` or an invalid sentinel.
+
+    Returns:
+        The converted float, or ``None`` when the value is empty or invalid.
+    """
+
     if not value or value in ("0/0", "N/A"):
         return None
     try:
@@ -202,6 +235,15 @@ def _parse_fraction(value):
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 def _to_int_or_none(value):
+    """Convert a value to an integer while preserving missing values.
+
+    Args:
+        value: The value to convert, commonly returned by ffprobe.
+
+    Returns:
+        An integer when conversion succeeds; otherwise ``None``.
+    """
+
     if value in (None, "N/A"):
         return None
     try:
@@ -212,25 +254,23 @@ def _to_int_or_none(value):
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 def _infer_bits_from_sample_fmt(sample_fmt):
+    """Infer audio sample depth from an ffprobe sample-format name.
+
+    Args:
+        sample_fmt: ffprobe sample format, such as ``"s16"`` or ``"fltp"``.
+
+    Returns:
+        The inferred bit depth, or ``None`` when it cannot be determined.
+    """
+
     if not sample_fmt:
         return None
 
+    # Prefer exact known formats, then fall back to a numeric suffix match.
     sample_fmt = sample_fmt.lower()
 
-    explicit_map = {
-        "u8": 8,
-        "u8p": 8,
-        "s16": 16,
-        "s16p": 16,
-        "s32": 32,
-        "s32p": 32,
-        "s64": 64,
-        "s64p": 64,
-        "flt": 32,
-        "fltp": 32,
-        "dbl": 64,
-        "dblp": 64,
-    }
+    explicit_map = { "u8": 8,  "u8p": 8,  "s16": 16,  "s16p": 16,  "s32": 32,  "s32p": 32,
+                     "s64": 64,  "s64p": 64,  "flt": 32,  "fltp": 32,  "dbl": 64,  "dblp": 64 }
 
     if sample_fmt in explicit_map:
         return explicit_map[sample_fmt]
@@ -244,6 +284,15 @@ def _infer_bits_from_sample_fmt(sample_fmt):
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 def _to_bool_from_int(value):
+    """Convert an integer-like value to a boolean.
+
+    Args:
+        value: An integer-like value, commonly a stream disposition flag.
+
+    Returns:
+        ``True`` or ``False`` for valid integers, otherwise ``None``.
+    """
+
     value = _to_int_or_none(value)
     if value is None:
         return None
@@ -251,10 +300,28 @@ def _to_bool_from_int(value):
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-def get_media_info(pathfile, use_count_frames_fallback=True, estimate_frames_fallback=True):
+def MvT_movie_info(pathfile, use_count_frames_fallback=True, estimate_frames_fallback=True):
+    """Collect normalized video, audio, format, and faststart information.
 
+    Args:
+        pathfile: Path to the media file to inspect.
+        use_count_frames_fallback: Count frames with a second ffprobe call if
+            the stream metadata does not contain a frame count.
+        estimate_frames_fallback: Estimate the frame count from duration and
+            FPS if direct and counted values are unavailable.
+
+    Returns:
+        A dictionary containing ``format``, ``video``, ``audios``, and
+        ``faststart`` metadata.
+
+    Raises:
+        ValueError: If the file contains no streams or no video stream.
+    """
+
+    # Normalize the path so ffprobe and the MP4 scanner inspect the same file.
     pathfile = str(Path(pathfile).expanduser().resolve())
 
+    # Probe the file once for the primary format and stream metadata.
     data = _run_ffprobe(pathfile, count_frames=False)
 
     streams = data.get("streams", [])
@@ -276,6 +343,7 @@ def get_media_info(pathfile, use_count_frames_fallback=True, estimate_frames_fal
     avg_frame_rate = video_stream.get("avg_frame_rate")
     fps = _parse_fraction(avg_frame_rate) or _parse_fraction(r_frame_rate)
 
+    # Resolve the frame count from direct metadata, counted frames, or an estimate.
     nb_frames = _to_int_or_none(video_stream.get("nb_frames"))
     frame_source = "nb_frames"
 
@@ -294,6 +362,7 @@ def get_media_info(pathfile, use_count_frames_fallback=True, estimate_frames_fal
         nb_frames = round(duration * fps)
         frame_source = "estimated"
 
+    # Normalize every audio stream and calculate its approximate data size.
     audio_streams = []
 
     for stream in streams:
@@ -344,6 +413,7 @@ def get_media_info(pathfile, use_count_frames_fallback=True, estimate_frames_fal
     if video_bit_rate is not None and duration is not None:
         estimated_video_size_bytes = int(video_bit_rate * duration / 8)
 
+    # Return one stable structure for callers, including the container check.
     return {    "format": 
                 {
                     "size": fsize,
@@ -373,5 +443,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Read Video-Infos with ffprobe.")
     parser.add_argument("filename", help="path/name video file")
     args = parser.parse_args()
-    info = get_media_info(args.filename)
+    info = MvT_movie_info(args.filename)
     print(json.dumps(info, indent=2, ensure_ascii=False))
