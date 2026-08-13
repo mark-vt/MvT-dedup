@@ -2,7 +2,10 @@
 #!packages/bin/python
 # ------------------------------------------------------------------------------
 
+import os
 import subprocess
+from io import BytesIO
+from PIL import Image
 
 def MvT_preview_tiles(video_path, cols, rows, width, quality, out_tile_path):
 
@@ -30,7 +33,7 @@ def MvT_preview_tiles(video_path, cols, rows, width, quality, out_tile_path):
         s = seconds % 60
         return f"{h:02d}:{m:02d}:{s:06.3f}"
 
-    def grab_frame_bytes(video_path, ts_sec, width, quality):
+    def grab_frame_bytes(video_path, ts_sec, width):
         """Pick a single I-Frame at specified point in time, convert to width and quality and return in ram"""
         cmd = [
             "ffmpeg",
@@ -40,9 +43,8 @@ def MvT_preview_tiles(video_path, cols, rows, width, quality, out_tile_path):
             "-i", str(video_path),
             "-vframes", "1",
             "-vf", f"scale={width}:-1",
-            "-q:v", str(quality),
             "-f", "image2pipe",
-            "-vcodec", "mjpeg",
+            "-vcodec", "png",
             "-"
         ]
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
@@ -53,26 +55,34 @@ def MvT_preview_tiles(video_path, cols, rows, width, quality, out_tile_path):
     # Get array of timestamps, one for every tile
     timestamps = gen_ts(video_get_duration( video_path ), cols * rows)
 
-    # Start ffmpeg-process for all the tiles and wait for input via stdin
-    proc = subprocess.Popen([
-        "ffmpeg",
-        "-y",
-        "-f", "image2pipe",
-        "-vcodec", "mjpeg",
-        "-i", "-",
-        "-filter_complex", f"tile={cols}x{rows}",
-        "-frames:v", "1",
-        out_tile_path
-    ], stdin=subprocess.PIPE)
-
-    # Pick one frame after the other and write to ffmpeg-process
+    # Try to grab frames at those timestamps, and store them in a list
+    frames = []
     for ts in timestamps:
-        print("Tile:",ts)
-        img_bytes = grab_frame_bytes(video_path, ts, width, quality)
-        proc.stdin.write(img_bytes)
+        try:
+            img_bytes = grab_frame_bytes(video_path, ts, width)
+            with Image.open(BytesIO(img_bytes)) as frame:
+                frames.append(frame.convert("RGB"))
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            print(f"Tile: {ts}: Could not extract tile: {error}")
+            break
+        else:
+            print(f"Tile: {ts}: ok")
 
-    proc.stdin.close()
-    proc.wait()
+    # If no frames were successfully grabbed, return False -> no tile file created
+    if not frames:
+        return False
+
+    tile_width = max(frame.width for frame in frames)
+    tile_height = max(frame.height for frame in frames)
+    mosaic = Image.new("RGB", (tile_width * cols, tile_height * rows), "black")
+    for index, frame in enumerate(frames):
+        mosaic.paste(frame, ((index % cols) * tile_width, (index // cols) * tile_height))
+
+    output_extension = os.path.splitext(out_tile_path)[1].lower()
+    if output_extension == ".png":
+        mosaic.save(out_tile_path, format="PNG")
+    else:
+        mosaic.save(out_tile_path, format="JPEG", quality=quality)
 
     return True
 

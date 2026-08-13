@@ -35,7 +35,7 @@ from MvT_movieInfo import MvT_movie_info
 # ------------------------------------------------------------------------------
 # Global Variables -------------------------------------------------------------
 
-version = '1.04'
+version = '1.05'
 
 searchFileCnt = 0
 
@@ -47,7 +47,7 @@ tkVars = {}
 fileDB = {}
 # hold connection from treeview item to fileDB entry
 iidDB = {}
-# The file tree TK structure which holds all the diplicates in TreeView way
+# The file tree Tk structure that holds all duplicates in a TreeView.
 tree = None
 # Will be set by function 'on_click' with iid+col of clicked line
 current_iid = (None, None)
@@ -91,10 +91,6 @@ fileNameInit = f'{scriptPathFile}.ini'
 fileNameData = f'{scriptPathFile}.dat'
 # Files with these extensions will be handled as video
 extensionMovie = '".mp4" ".mpg" ".mpeg" ".avi" ".mkv" ".flv" ".wmv"'
-
-tileQuality = 4
-
-movieInfoTileDB = "MvT_DB"
 
 def is_pure_folder_name(folder_name: str) -> bool:
     """Return True when folder_name is a single valid folder component."""
@@ -145,20 +141,27 @@ def image_show_in_window(image_path: str, delFlg: bool) -> None:  # PILLOW versi
     """Open image_path in a new Tk window. If delFlg is True, delete the file when the window is closed."""
     global root                                # supports more image formats
 
+    try:
+        with Image.open(image_path) as source_image:
+            source_image.load()
+            img = source_image.copy()
+    except (OSError, UnidentifiedImageError) as error:
+        print(f"Could not open preview image '{image_path}': {error}")
+        return
+
+    # Image proportional to max 1280x800 resize
+    resampling_filter = getattr(Image, "Resampling", Image).LANCZOS
+    img.thumbnail((1280, 800), resampling_filter)
+
     win = tk.Toplevel(root)
     win.title(image_path)
 
     # ESC closes window
     win.bind("<Escape>", lambda event: win.destroy())
 
-    # Load picture with PILLOW
-    img = Image.open(image_path)
-    # Image proportional to max 1280x800 resize
-    img.thumbnail((1280, 800), Image.Resampling.LANCZOS)
-
-    photo = ImageTk.PhotoImage(img)
-    label = ttk.Label(win, image=photo)
-    label.image = photo  # Referenz halten!
+    photo = ImageTk.PhotoImage(img, master=win)
+    win.preview_photo = photo
+    label = tk.Label(win, image=photo)
     label.pack(fill="both", expand=True)
 
     def on_close() -> None:
@@ -176,31 +179,62 @@ def image_show_in_window(image_path: str, delFlg: bool) -> None:  # PILLOW versi
     if delFlg:
         win.protocol("WM_DELETE_WINDOW", on_close)
 
+def existing_preview_path(pathfile: str) -> str | None:
+    """Return an existing JPG or PNG tile for pathfile, preferring the configured type."""
+    output_dir = os.path.join(os.path.dirname(pathfile), tkVars['MovieInfoTileDB'].get())
+    movie_name = os.path.basename(pathfile)
+    configured_extension = tkVars['PrvwMosT'].get().lower().lstrip('.')
+    extensions = [configured_extension] + [extension for extension in ('jpg', 'png')
+                                           if extension != configured_extension]
+    for extension in extensions:
+        tile_path = os.path.join(output_dir, f'{movie_name}.{extension}')
+        if os.path.exists(tile_path):
+            return tile_path
+    return None
+
 def show_preview_win( pathfile: str ) -> None:
     """Show a preview of pathfile: display images directly, generate a mosaic preview for videos, or report unsupported type."""
     delFlag = False
     s = tkVars['PrvwMosFilm'].get()
-    mov_ext_list = [part.strip('"') for part in s.split()]
+    mov_ext_list = [part.strip('"').lower() for part in s.split()]
 
     pureFile, pureExt = os.path.splitext(pathfile)  # [0]=pathfile, [1]=ext
 
     if is_probably_picture_file( pathfile ):        # if image, display it
         image_show_in_window( pathfile, delFlag )
-    elif pureExt.lower() in mov_ext_list:           # if video, create preview image and display it
-        ext = tkVars['PrvwMosT'].get()
-        outFile = f'{pureFile}.{ext}'
-        # if no preview file of this type exists
-        if not os.path.exists(outFile):
+    elif pureExt.lower() in mov_ext_list:           # if video, display or create a preview image
+        output_dir = os.path.join(os.path.dirname(pathfile), tkVars['MovieInfoTileDB'].get())
+        os.makedirs(output_dir, exist_ok=True)
+        outFile = existing_preview_path(pathfile)
+        if outFile is None:
+            ext = tkVars['PrvwMosT'].get().lower().lstrip('.')
+            outFile = os.path.join(output_dir, f'{os.path.basename(pathfile)}.{ext}')
             # Create a preview file
-            if not MvT_preview_tiles(pathfile,
-                                     int(tkVars['PrvwMosX'].get() ),
-                                     int(tkVars['PrvwMosY'].get() ),
-                                     int(tkVars['PrvwMosS'].get() ),
-                                     tileQuality, outFile):
+            try:
+                print("--------------------------------------------------------")
+                print(outFile)
+                created = MvT_preview_tiles(pathfile,
+                                            int(tkVars['PrvwMosX'].get() ),
+                                            int(tkVars['PrvwMosY'].get() ),
+                                            int(tkVars['PrvwMosS'].get() ),
+                                            int(tkVars['TileQuality'].get()), outFile)
+            except (OSError, subprocess.SubprocessError, ValueError) as error:
+                print(f"Could not create preview for '{pathfile}': {error}")
+                return
+            if not created or not is_probably_picture_file(outFile):
                 print("Seems not to be a valid video:", pathfile)
                 return
             if tkVars['DelPreviewOnClose'].get():
                 delFlag = True
+
+        if not tkVars['DelPreviewOnClose'].get():
+            info_path = os.path.join(
+                output_dir, f'{os.path.basename(pathfile)}.json'
+            )
+            if not os.path.exists(info_path):
+                movie_info = MvT_movie_info(pathfile)
+                with open(info_path, 'w', encoding='utf-8') as info_file:
+                    json.dump(movie_info, info_file, indent=2)
 
         image_show_in_window( outFile, delFlag )
     elif is_probably_text_file(pathfile):
@@ -218,6 +252,15 @@ def delete_file( pathfile: str ) -> None:
     else:
         os.remove(pathfile)
         status_write(f"File {pathfile} deleted!")
+
+def delete_movie_info_files(pathfile: str) -> None:
+    """Delete the generated tile and movie-info JSON associated with a source movie."""
+    output_dir = os.path.join(os.path.dirname(pathfile), tkVars['MovieInfoTileDB'].get())
+    movie_name = os.path.basename(pathfile)
+    for ext in ('jpg', 'png', 'json'):
+        path = os.path.join(output_dir, f"{movie_name}.{ext}")
+        if os.path.exists(path):
+            delete_file(path)
 
 def delete_empty_folder(folder: str) -> None:
     """Delete folder if it is empty and the 'DelEmptyFolder' setting is active."""
@@ -365,32 +408,35 @@ def init_data_load() -> None:
     global initData, searchFolders, searchFolderLast, fileNameInit
 
     # If no such file or failed, use this for initialization
-    initData = { 'Version'           : version,
-                 'winSizeX'           :840, 'winSizeY': 600,
-                 'winPosX'           : 100, 'winPosY' : 100,
-                 'DelEmptyFolder'    : True ,
-                 'DeleteToTrash'     : False ,
-                 'SaveMarkTexts'     : True ,
-                 'SaveFileDB'        : False,
-                 'SearchFolders'     : { os.path.expanduser('~') : 1 },
-                 'SearchFoldLast'    : searchFolderLast,
-                 'DelEmptyFolder'    : True,
-                 'SaveMarkTexts'     : True,
-                 'ShowFilesRight'    : True,
-                 'SortGroupsBigFirst': True,
-                 'UseFastHash'       : True,
-                 'HashBlkSize'       : "17",
-                 'HashBlkNum'        : "11",
-                 'DelPreviewOnClose' : True,
-                 'PrvwMosX'          : "4",
-                 'PrvwMosY'          : "3",
-                 'PrvwMosS'          : "320",
-                 'PrvwMosT'          : "jpg",
-                 'PrvwMosFilm'       : extensionMovie,
-                 'MovieInfoTileDB'   : movieInfoTileDB,
-                 'SimiThreshold'     : 0.90,
-                 'SimiTimeWindow'    : 11,
-                 'WinZoomFactor'     : 1.0
+    initData = { 'Version'            : version,
+                 'winSizeX'           : 840, 'winSizeY': 600,
+                 'winPosX'            : 100, 'winPosY' : 100,
+                 'DelEmptyFolder'     : True ,
+                 'DeleteToTrash'      : False ,
+                 'SaveMarkTexts'      : True ,
+                 'SaveFileDB'         : False,
+                 'SearchFolders'      : { os.path.expanduser('~') : 1 },
+                 'SearchFoldLast'     : searchFolderLast,
+                 'DelEmptyFolder'     : True,
+                 'SaveMarkTexts'      : True,
+                 'ShowFilesRight'     : True,
+                 'SortGroupsBigFirst' : True,
+                 'UseFastHash'        : True,
+                 'HashBlkSize'        : "17",
+                 'HashBlkNum'         : "11",
+                 'DelPreviewOnClose'  : True,
+                 'PrvwMosX'           : "4",
+                 'PrvwMosY'           : "3",
+                 'PrvwMosS'           : "320",
+                 'PrvwMosT'           : "jpg",
+                 'PrvwMosFilm'        : extensionMovie,
+                 'TileQuality'        : 60,
+                 'MovieInfoTileDB'    : "MvT_DB",
+                 'SimiThreshold'      : 0.90,
+                 'SimiTimeWindow'     : 11,
+                 'SimiAspectRatio'    : False,
+                 'SimiAspectRatioVari': 1,
+                 'WinZoomFactor'      : 1.0
                }
 
     # Read stored ini data from file and overwrite defaults, if a file
@@ -561,7 +607,7 @@ def wmake_search_folder( tab: ttk.Frame ) -> None:
     # "Disable selected" button
     butFoldDis = tk.Button( butFoldFrame, text='Disable selected', command=search_folder_disable, bg=colorButt[1] )
     butFoldDis.pack(padx = 10, pady=5, side=tk.LEFT)
-    # List of search folder
+    # List of search folders
     searchFoldListbox = tk.Listbox(master=tab, listvariable=searchFolders.keys(), selectmode='multiple' )
     searchFoldListbox.pack(padx=10, pady=5, expand=True, fill=tk.BOTH, side=tk.TOP)
     searchFoldListbox.bind('<<ListboxSelect>>', search_folder_marked)
@@ -894,13 +940,13 @@ def calc_b3_fast_wrap(filename: str) -> str | None:
 def list_files( folder: str ) -> None:
     global fileDB, searchStopFlag, searchFileCnt
 
-    status_write( f"Search in:{folder}" )
+    status_write( f"Search in: {folder}" )
 
     searchFileCnt = 0;
     time_last = 0
 
     if searchStopFlag:
-        status_write( f"Search in:{folder} stopped by stop key!" )
+        status_write( f"Search in: {folder} stopped by the user!" )
         return
 
     for dirpath, dirnames, filenames in os.walk(folder):
@@ -910,9 +956,9 @@ def list_files( folder: str ) -> None:
 
         # print(f'Current directory: {dirpath}')
         for filename in filenames:
-            # If STOP flag is active then stop further operations immediatly
+            # If the STOP flag is active, stop further operations immediately.
             if searchStopFlag:
-                status_write( f"Search in:{folder} stopped by stop key!" )
+                status_write( f"Search in: {folder} stopped by the user!" )
                 return
             # Define the FULL path/filename thing for accessing files absolute
             file_path = os.path.join(dirpath, filename)
@@ -1000,9 +1046,9 @@ def list_stop() -> None:
 # Walk over the database with ALL files and remove everything which has no duplicates
 def list_cleanup() -> None:
     global fileDB
-    status_write( "Remove single entries ..." )
+    status_write( "Removing single entries ..." )
     groups=0
-    # Walk through the whole 'size' dictonary and delete all hash entries with only 1 file
+    # Walk through the whole 'size' dictionary and delete all hash entries with only one file.
     # Use list() because we may delete entries from dictionaries inside this loop
     for size in list(fileDB):
         size_db = fileDB[size]
@@ -1047,7 +1093,7 @@ def list_update_tree( frame: ttk.Frame ) -> None:
     """Destroy any existing Treeview in frame and rebuild it from fileDB with scrollbars and context menus."""
     global tree, iidDB, fileDB, current_iid
 
-    # If the tree already exists, completley destroy it
+    # If the tree already exists, completely destroy it.
     if tree:    tree.destroy()
 
     # Create a tree widget which is scrollable
@@ -1067,7 +1113,7 @@ def list_update_tree( frame: ttk.Frame ) -> None:
     # Create the treeview
     tree.pack(side=tk.LEFT,fill=tk.BOTH, expand=True)
 
-    # Redefine the hights of the lines to not squeeze the fonts
+    # Adjust the line heights so the fonts are not squeezed.
     style = ttk.Style()
     style.theme_use("clam")
     font = tkFont.nametofont("TkDefaultFont")
@@ -1107,6 +1153,7 @@ def list_update_tree( frame: ttk.Frame ) -> None:
                 root.clipboard_clear()
                 root.clipboard_append(os.path.dirname(filename))
             case "delete":
+                delete_movie_info_files(filename)
                 delete_file(filename)
                 list_delete_file_from_dbs(size, hashval, filename)
 
@@ -1117,14 +1164,14 @@ def list_update_tree( frame: ttk.Frame ) -> None:
     menu0.add_command(label="Mark this file for deletion", command=lambda: menu_action("markThis"))
     menu0.add_command(label="Keep this file", command=lambda: menu_action("keepThis"))
     menu0.add_separator()
-    menu0.add_command(label="!Delete immediatly!", command=lambda: menu_action("delete"))
+    menu0.add_command(label="!Delete immediately!", command=lambda: menu_action("delete"))
     # Menu if right-click to path/file
     menu1 = tk.Menu(root, tearoff=0)
     menu1.add_command(label="Copy path/filename to clipboard", command=lambda: menu_action("copyPF"))
     menu1.add_command(label="Copy only path to clipboard", command=lambda: menu_action("copyP"))
     menu1.add_command(label="Copy only filename to clipboard", command=lambda: menu_action("copyF"))
     menu1.add_separator()
-    menu1.add_command(label="!Delete immediatly!", command=lambda: menu_action("delete"))
+    menu1.add_command(label="!Delete immediately!", command=lambda: menu_action("delete"))
 
     # Helper function for normal/left clicks -> toggle del marker or pick for marking
     def on_click(event: tk.Event) -> None:
@@ -1223,7 +1270,7 @@ def list_update() -> None:
     #search_update_CbEntry( list_update.frame )
     list_update_tree( list_update.frame )
 
-    status_write( "Build list with duplicates ... DONE, display may be delayed" )
+    status_write( "Building the duplicate list ... done; the display may be delayed" )
 
 # A single entry in the DB will be deleted here. If last entry or if only one
 # entry left (which shall not be deleted), then remove hash entry, too. If this
@@ -1252,7 +1299,7 @@ def list_delete_file_from_dbs(size: int, hashval: str, filename: str) -> bool:
         del fileDB[size][hashval]
         tree.delete(iidp)
 
-        # if no more file hashs for this size, delete size entry
+        # If no more file hashes exist for this size, delete the size entry.
         if len(fileDB[size]) == 0:
             del fileDB[size]
 
@@ -1279,6 +1326,7 @@ def list_delete_marked() -> None:
                 delFlag = hash_db[filename].get()
                 #print(f'{filename} : {delFlag}')
                 if delFlag :
+                    delete_movie_info_files(filename)
                     delete_file(filename)
                     folder = os.path.dirname(filename)
                     if is_dir_empty(folder):
@@ -1329,7 +1377,7 @@ def list_restore() -> None:
         # Convert the keys of 1st dict layer back to integers as original
         fileDB = {int(k): v for k, v in raw.items()}
 
-        status_write(f'Files/groups loaded successfuly from file: {fileNameData}')
+        status_write(f'Files/groups loaded successfully from file: {fileNameData}')
         list_cleanup()
         list_update()
     else:
@@ -1605,7 +1653,7 @@ def wmake_mark( tab: ttk.Frame ) -> None:
     for maOpt in markOptions:
         frameL = ttk.Frame( mark_scrollable_frame )
         frameL.pack(padx = 2, pady=1, fill="x", expand=True, side=tk.TOP)
-        but = tk.Button( frameL, text='mark', font=('Arial', 8) )
+        but = tk.Button( frameL, text='Mark', font=('Arial', 8) )
         but.pack(padx = 2, pady=0, side=tk.LEFT)
         tk.Label(frameL, text=maOpt[1] ).pack(side=tk.LEFT, fill='x')
         if len(maOpt) > 3:
@@ -1614,7 +1662,7 @@ def wmake_mark( tab: ttk.Frame ) -> None:
             entry = tk.Entry(frameL, textvariable=tkv, font='TkFixedFont', bg=maOpt[3] )
             entry.pack(side='left', padx=2, fill='x', expand=True)
             if len(maOpt) > 4:
-                but_pick = tk.Button( frameL, text='pick', font=('Arial', 8) )
+                but_pick = tk.Button( frameL, text='Pick', font=('Arial', 8) )
                 but_pick.pack(padx = 2, pady=0, side=tk.LEFT)
                 but_pick.config( command=lambda c=tkv: c.set(lastSelectedFile) )
 
@@ -1664,7 +1712,7 @@ def info_parse_folder(folder: str) -> None:
         if infoStopFlag:
             return
 
-        dirnames[:] = [dirname for dirname in dirnames if dirname != movieInfoTileDB]
+        dirnames[:] = [dirname for dirname in dirnames if dirname != tkVars['MovieInfoTileDB'].get()]
 
         for filename in filenames:
             if infoStopFlag:
@@ -1679,8 +1727,8 @@ def info_parse_folder(folder: str) -> None:
                 continue
 
             movie_path = os.path.join(dirpath, filename)
-            output_dir = os.path.join(dirpath, movieInfoTileDB)
-            movie_name = os.path.splitext(filename)[0]
+            output_dir = os.path.join(dirpath, tkVars['MovieInfoTileDB'].get())
+            movie_name = filename
             tile_extension = tkVars['PrvwMosT'].get().lower().lstrip('.')
             tile_path = os.path.join(output_dir, f"{movie_name}.{tile_extension}")
             info_path = os.path.join(output_dir, f"{movie_name}.json")
@@ -1708,12 +1756,14 @@ def info_parse_folder(folder: str) -> None:
                 with open(info_path, "w", encoding="utf-8") as info_file:
                     json.dump(movie_info, info_file, indent=2)
 
+                print("--------------------------------------------------------")
+                print(tile_path)
                 MvT_preview_tiles(
                     movie_path,
                     int(tkVars['PrvwMosX'].get()),
                     int(tkVars['PrvwMosY'].get()),
                     int(tkVars['PrvwMosS'].get()),
-                    tileQuality, tile_path )
+                    int(tkVars['TileQuality'].get()), tile_path )
                 info_show_result(movie_info, tile_path)
             except (OSError, subprocess.SubprocessError, ValueError) as error:
                 status_write(f"Could not process {movie_path}: {error}")
@@ -1745,7 +1795,7 @@ def wmake_info( tab: ttk.Frame ) -> None:
 
     create_info_button = tk.Button(
         action_frame,
-        text="Create text and tile info files",
+        text="Create tile and info files",
         command=info_parse_folders,
         bg=colorButt[0],
     )
@@ -1799,6 +1849,25 @@ def wmake_simi( tab: ttk.Frame ) -> None:
             return float(duration) if duration is not None else None
         except (TypeError, ValueError):
             return None
+
+    def movie_aspect_ratio(movie: dict) -> float | None:
+        """Return the movie's video aspect ratio from its JSON metadata."""
+        video = movie["info"].get("video", {})
+        try:
+            width = float(video["width"])
+            height = float(video["height"])
+            return width / height if width > 0 and height > 0 else None
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
+            return None
+
+    def aspect_ratio_matches(first_movie: dict, second_movie: dict, variation: float) -> bool:
+        """Return whether two movie aspect ratios are within the configured tolerance."""
+        first_ratio = movie_aspect_ratio(first_movie)
+        second_ratio = movie_aspect_ratio(second_movie)
+        if first_ratio is None or second_ratio is None:
+            return False
+        difference = abs(first_ratio - second_ratio) / max(first_ratio, second_ratio)
+        return difference <= variation / 100.0
 
     def tile_similarity(first_path: str, second_path: str) -> float:
         """Return perceptual-hash similarity from 0.00 to 1.00."""
@@ -1879,6 +1948,13 @@ def wmake_simi( tab: ttk.Frame ) -> None:
         pane["title"].config(text=os.path.basename(movie["movie_path"]))
 
     def display_pair() -> None:
+        pair_position = (
+            f"{simi_state['pair_index'] + 1} of {len(simi_state['pairs'])}"
+            if simi_state["pairs"]
+            else "0 of 0"
+        )
+        for pair_position_label in pair_position_labels:
+            pair_position_label.config(text=pair_position)
         if not simi_state["pairs"]:
             for pane in simi_state["panes"]:
                 show_movie(pane, None, None)
@@ -1903,19 +1979,18 @@ def wmake_simi( tab: ttk.Frame ) -> None:
             for dirpath, dirnames, filenames in os.walk(folder):
                 if simiStopFlag:
                     return
-                dirnames[:] = [dirname for dirname in dirnames if dirname != movieInfoTileDB]
+                dirnames[:] = [dirname for dirname in dirnames if dirname != tkVars['MovieInfoTileDB'].get()]
                 for filename in filenames:
                     if simiStopFlag:
                         return
                     if os.path.splitext(filename)[1].lower() not in movie_extensions:
                         continue
                     movie_path = os.path.join(dirpath, filename)
-                    output_dir = os.path.join(dirpath, movieInfoTileDB)
-                    movie_name = os.path.splitext(filename)[0]
+                    output_dir = os.path.join(dirpath, tkVars['MovieInfoTileDB'].get())
+                    movie_name = filename
                     info_path = os.path.join(output_dir, f"{movie_name}.json")
-                    tile_extension = tkVars['PrvwMosT'].get().lower().lstrip('.')
-                    tile_path = os.path.join(output_dir, f"{movie_name}.{tile_extension}")
-                    if not os.path.exists(info_path) or not os.path.exists(tile_path):
+                    tile_path = existing_preview_path(movie_path)
+                    if not os.path.exists(info_path) or tile_path is None:
                         continue
                     try:
                         with open(info_path, "r", encoding="utf-8") as info_file:
@@ -1945,11 +2020,15 @@ def wmake_simi( tab: ttk.Frame ) -> None:
                     break
                 if simiStopFlag:
                     return
+                if tkVars["SimiAspectRatio"].get() and not aspect_ratio_matches(
+                    first_movie, second_movie, tkVars["SimiAspectRatioVari"].get()
+                ):
+                    continue
                 try:
                     similarity = tile_similarity(first_movie["tile_path"], second_movie["tile_path"])
                 except OSError:
                     continue
-                if similarity >= threshold:
+                if round(similarity, 2) >= round(threshold, 2):
                     pairs.append((first_movie, second_movie, similarity))
 
         simi_state["pairs"] = pairs
@@ -1994,12 +2073,17 @@ def wmake_simi( tab: ttk.Frame ) -> None:
     action_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
     tk.Button(action_frame, text="Find similar movies", command=find_similar_movies, bg=colorButt[0]).pack(side=tk.LEFT)
     tk.Button(action_frame, text="STOP", command=simi_stop, bg=colorButt[1]).pack(side=tk.LEFT, padx=(5, 0))
+    tk.Label(
+        action_frame,
+        text="Process 'Create movie info' before you press 'Find similar movies' button.",
+    ).pack(side=tk.LEFT, padx=(10, 0))
 
     content_frame = ttk.Frame(tab)
     content_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
     content_frame.columnconfigure(0, weight=1)
     content_frame.columnconfigure(1, weight=1)
     content_frame.rowconfigure(0, weight=1)
+    pair_position_labels = []
 
     # Build two equal panes, each with tile, metadata, and navigation controls.
     for pane_index in range(2):
@@ -2017,8 +2101,11 @@ def wmake_simi( tab: ttk.Frame ) -> None:
         controls = ttk.Frame(pane_frame)
         controls.grid(row=3, column=0, sticky="ew", padx=4, pady=4)
         tk.Button(controls, text="Delete", command=lambda i=pane_index: delete_movie(i), bg="#ff9999").pack(side=tk.LEFT)
-        tk.Button(controls, text="Prev", command=lambda: move_pair(-1), bg="#99ccff").pack(side=tk.RIGHT, padx=2)
-        tk.Button(controls, text="Next", command=lambda: move_pair(1), bg="#99ccff").pack(side=tk.RIGHT, padx=2)
+        pair_position_label = tk.Label(controls, text="0 of 0")
+        pair_position_label.pack(side=tk.LEFT, padx=10)
+        pair_position_labels.append(pair_position_label)
+        tk.Button(controls, text="Prev", command=lambda: move_pair(-1), bg="#99ccff").pack(side=tk.LEFT, padx=2)
+        tk.Button(controls, text="Next", command=lambda: move_pair(1), bg="#99ccff").pack(side=tk.LEFT, padx=2)
         simi_state["panes"].append({"title": title, "tile_frame": tile_frame, "json_frame": json_frame})
 
 # ------------------------------------------------------------------------------
@@ -2026,7 +2113,7 @@ def wmake_simi( tab: ttk.Frame ) -> None:
 
 def wmake_settings( tab: ttk.Frame ) -> None:
     """Build the 'Settings' tab UI with all program options (deletion behaviour, hash, preview mosaic, window zoom)."""
-    global initData, root, movieInfoTileDB
+    global initData, root
 
     chkbDelEmpFold   = tk_variables_register_and_init('DelEmptyFolder'    , 'bool')
     chkbDel2Trash    = tk_variables_register_and_init('DeleteToTrash'     , 'bool')
@@ -2051,56 +2138,54 @@ def wmake_settings( tab: ttk.Frame ) -> None:
     previewMosaicInfo= tk_variables_register_and_init('PrvwMosI'       , 'string')
     previewMosaicType= tk_variables_register_and_init('PrvwMosT'       , 'string')
     previewMosaicFilm= tk_variables_register_and_init('PrvwMosFilm'    , 'string')
+    previewTileQuali = tk_variables_register_and_init('TileQuality', 'integer')
+    
     movie_info_tile_db = tk_variables_register_and_init('MovieInfoTileDB', 'string')
-    similarityThreshold = tk_variables_register_and_init('SimiThreshold', 'double')
+    similarityThreshold    = tk_variables_register_and_init('SimiThreshold', 'double')
     similarity_time_window = tk_variables_register_and_init('SimiTimeWindow', 'integer')
-
-    if is_pure_folder_name(movie_info_tile_db.get()):
-        movieInfoTileDB = movie_info_tile_db.get()
-    else:
-        movie_info_tile_db.set(movieInfoTileDB)
-
-    def movie_info_tile_db_changed(*args: str) -> None:
-        global movieInfoTileDB
-        value = movie_info_tile_db.get().strip()
-        if is_pure_folder_name(value):
-            movieInfoTileDB = value
-        elif value != movieInfoTileDB:
-            movie_info_tile_db.set(movieInfoTileDB)
-
-    movie_info_tile_db.trace_add("write", movie_info_tile_db_changed)
+    same_aspect_ratio      = tk_variables_register_and_init('SimiAspectRatio', 'bool')
+    aspect_ratio_variation = tk_variables_register_and_init('SimiAspectRatioVari', 'integer')
 
     # Create a scrollable frame to hold all the settings - - - - - - - - - - - -
     sf = ScrollableFrame( tab )
     sf.pack(fill='both', pady=(0,0), expand=True)
     sfSettings = sf.scrollable_frame
+    settings_frame_style = "Settings.TLabelframe"
+    settings_frame_label_style = f"{settings_frame_style}.Label"
+    ttk.Style().configure(
+        settings_frame_label_style,
+        font=("TkDefaultFont", 11, "bold"),
+    )
 
     # Create single-button settings - - - - - - - - - - - - - - - - - - - - - -
 
-    tk.Checkbutton(sfSettings, text="Delete folder if they become empty by file removement",
+    commonFrame = ttk.LabelFrame(
+        sfSettings, text="Common Settings", style=settings_frame_style )
+    commonFrame.pack(anchor="w", side='top', fill="x", padx=(4,8), pady=4)
+
+    tk.Checkbutton(commonFrame, text="Delete folders when they become empty after file removal",
         variable=chkbDelEmpFold ).pack(anchor="w", side='top', pady=(16,16) )
 
-    tk.Checkbutton(sfSettings, text="Delete to TRASH instead of real deletion",
+    tk.Checkbutton(commonFrame, text="Delete to TRASH instead of real deletion",
         variable=chkbDel2Trash ).pack(anchor="w", side='top', pady=(0,16) )
 
     #tk.Checkbutton(sfSettings, text="Show long filenames by shifting right",
     #    variable=chkbShowFileRight ).pack(anchor="w", side='top', pady=(0,16) )
 
-    tk.Checkbutton(sfSettings, text="Sort groups with biggest file size first",
+    tk.Checkbutton(commonFrame, text="Sort groups with the largest file size first",
         variable=chkbGrpSortBig1st ).pack(anchor="w", side='top', pady=(0,16) )
 
-    tk.Checkbutton(sfSettings, text="Save settings from the MARK tab at program's end",
+    tk.Checkbutton(commonFrame, text="Save settings from the MARK tab when the program exits",
         variable=chkbSaveMarkTxt ).pack(anchor="w", side='top', pady=(0,16) )
 
-    tk.Checkbutton(sfSettings, text="Store file database at program's end to continue on next start without new 'search' (click 'Restore list')",
+    tk.Checkbutton(commonFrame, text="Store file database at program's end to continue on next start without new 'search' (click 'Restore list')",
         variable=chkbSaveFileDB ).pack(anchor="w", side='top', pady=(0,16) )
 
     # Create Zoom-Slider for WINDOW SIZE - - - - - - - - - - - - - - - - - - - -
 
-    winsizeFrame = ttk.Frame( sfSettings )
+    winsizeFrame = ttk.LabelFrame(
+        sfSettings, text="Program Settings", style=settings_frame_style )
     winsizeFrame.pack(anchor="w", side='top', fill="x", padx=(4,8), pady=4)
-    winsizeFrame['borderwidth'] = 2
-    winsizeFrame['relief'] = 'ridge'
 
     label = tk.Label(winsizeFrame, text="Window zoom factor:")
     label.pack(anchor="w", side='left', padx=(8,0), pady=(0,5))
@@ -2108,33 +2193,78 @@ def wmake_settings( tab: ttk.Frame ) -> None:
     def on_zoom_change(value: str) -> None:
         global root
         factor = float(value)
-        print("Faktor:", factor, value)
+        print("Factor:", factor, value)
         root.tk.call("tk", "scaling", factor)
 
     scale = tk.Scale( winsizeFrame, from_=0.5, to=3.0, resolution=0.1, orient="horizontal",
                       variable=slideWinZoom, command=on_zoom_change )
     scale.pack(anchor="w", side='left', padx=(8,0), pady=(0,5) )
 
-    label = tk.Label(winsizeFrame, text="(becomes active after rebooting this program)")
+    label = tk.Label(winsizeFrame, text="(takes effect after restarting the program)")
     label.pack(anchor="w", side='left', padx=(8,0), pady=(0,5))
+
+    # Create a frame for FAST HASH - - - - - - - - - - - - - - - - - - - - - - -
+
+    # helper function to calc fast hash parameters
+    def block_update() -> None:
+        bs = "(" + humread(1 << (int(blockSize.get()))) + ")"
+        bt = " = " + humread(int(blockNum.get()) << (int(blockSize.get())))
+        blockSizeHR.set(bs)
+        blockTotal.set(bt)
+
+    # Create a frame for the fast hash options
+    fastHashFrame = ttk.LabelFrame(
+        sfSettings, text="Fast Hash (compare files)", style=settings_frame_style )
+    fastHashFrame.pack(anchor="w", side='top', fill="x", padx=(4,8), pady=4)
+
+    tk.Label(
+        fastHashFrame,
+        text="If 'fast file hash' is enabled then from big files only a number "
+        "of blocks, all with same size, will be picked out and compared. "
+        "This is much faster than comparing complete files with many GBytes.",
+        justify="left", anchor="w", fg="dark green",
+    ).pack(anchor="w", side='top', fill="x", padx=8, pady=(4,0))
+
+    tk.Checkbutton(fastHashFrame, text="Very safe mode: also calculate the full hash if the fast hash says 'equal' (only useful with the option below; slower)",
+        variable=chkbUseFastHashFull ).pack(anchor="w", side='top', pady=(4,0) )
+
+    tk.Checkbutton(fastHashFrame, text="Use fast file hashing for large files (full hash otherwise)",
+        variable=chkbUseFastHash ).pack(anchor="w", side='left', pady=(4,4) )
+
+    label = tk.Label(fastHashFrame, text="Blocksize: 2^")
+    label.pack(anchor="w", side='left', padx=(25,0), pady=(10,5), fill="x")
+
+    spinbox = tk.Spinbox( fastHashFrame, from_=9, to=30, wrap=True, width=3,
+                          textvariable=blockSize, command=block_update )
+    spinbox.pack(anchor="w", side='left', pady=(10,5), padx=(2,5))
+
+    # A helper label to show the selected value in a human readable format
+    label = tk.Label(fastHashFrame, textvariable=blockSizeHR)
+    label.pack(anchor="w", side='left', padx=5, pady=(10,5), fill="x")
+
+    # - - -
+
+    label = tk.Label(fastHashFrame, text=" x  #blocks:")
+    label.pack(anchor="w", side='left', padx=0, pady=(10,5), fill="x")
+
+    spinbox = tk.Spinbox( fastHashFrame, from_= 3, to=100, wrap=True, width=3,
+        textvariable=blockNum, command=block_update )
+    spinbox.pack(anchor="w", side='left', pady=(10,5), padx=(2,5))
+
+    label = tk.Label(fastHashFrame, textvariable=blockTotal)
+    label.pack(anchor="w", side='left', padx=0, pady=(10,5), fill="x")
+
+    block_update()
 
     # Create a frame for the PREVIEW - - - - - - - - - - - - - - - - - - - - - -
 
-    # helper function to calc fast hash parameters
     def mosaic_update() -> None:
         mi = "= Images: " + str(int(previewMosaicX.get()) * int(previewMosaicY.get())) + \
              ",  Total width: " + str(int(previewMosaicX.get()) * int(previewMosaicSize.get()))
         previewMosaicInfo.set(mi)
 
-    previewFrame = ttk.Frame( sfSettings )
+    previewFrame = ttk.LabelFrame( sfSettings, text="Video Preview", style=settings_frame_style)
     previewFrame.pack(anchor="w", side='top', fill="x", padx=(4,8), pady=4)
-    previewFrame['borderwidth'] = 2
-    previewFrame['relief'] = 'ridge'
-
-    label = tk.Label(
-        previewFrame, text="Video Preview", font=("TkDefaultFont", 10, "bold")
-    )
-    label.pack(anchor="n", side='top', fill="x", padx=(4,0), pady=0)
 
     tk.Checkbutton(previewFrame, text="Delete generated video preview file if preview window closed",
         variable=chkbDelPreview ).pack(anchor="w", side='top', pady=4 )
@@ -2145,12 +2275,18 @@ def wmake_settings( tab: ttk.Frame ) -> None:
     tk.Entry(previewFrame, textvariable=previewMosaicFilm,
              font='TkFixedFont' ).pack(side='top', padx=(12,8), fill='x', expand=True)
 
-    label = tk.Label(previewFrame, text="Select file type for video preview files:")
+    label = tk.Label(previewFrame, text="Select the file type for video previews:")
     label.pack(anchor="w", side='top', padx=8, pady=(8,0) )
-
-    ttk.Radiobutton(previewFrame, text='*.png file type for preview', value='png', variable=previewMosaicType).pack(side='top', fill='x', padx=24, pady=0)
-    ttk.Radiobutton(previewFrame, text='*.jpg file type for preview', value='jpg', variable=previewMosaicType).pack(side='top', fill='x', padx=24, pady=(0,4) )
-
+    ttk.Radiobutton(previewFrame, text='Use *.png files for previews', value='png', variable=previewMosaicType).pack(side='top', fill='x', padx=24, pady=0)
+    ttk.Radiobutton(previewFrame, text='Use *.jpg files for previews', value='jpg', variable=previewMosaicType).pack(side='top', fill='x', padx=24, pady=0)
+                                                                                                                     
+    quality_frame = tk.Frame(previewFrame)
+    quality_frame.pack(anchor="w", side="top", fill="x", padx=24, pady=(0, 12))
+    tk.Label(quality_frame, text="JPG quality (1..100):").pack(side="left")
+    tk.Scale(quality_frame, from_=1, to=100, resolution=1, orient="horizontal",
+             variable=previewTileQuali, showvalue=True
+    ).pack(side="left", fill="x", expand=True, padx=(0, 8))
+ 
     label = tk.Label(previewFrame, text="Mosaic pattern:  columns(X):")
     label.pack(anchor="w", side='left', padx=(8,0), pady=(0,5))
 
@@ -2177,59 +2313,6 @@ def wmake_settings( tab: ttk.Frame ) -> None:
 
     mosaic_update()
 
-    # Create a frame for FAST HASH - - - - - - - - - - - - - - - - - - - - - - -
-
-    # helper function to calc fast hash parameters
-    def block_update() -> None:
-        bs = "(" + humread(1 << (int(blockSize.get()))) + ")"
-        bt = " = " + humread(int(blockNum.get()) << (int(blockSize.get())))
-        blockSizeHR.set(bs)
-        blockTotal.set(bt)
-
-    # Create a frame for the fast hash options
-    fastHashFrame = ttk.Frame( sfSettings )
-    fastHashFrame.pack(anchor="w", side='top', fill="x", padx=(4,8), pady=4)
-    fastHashFrame['borderwidth'] = 2
-    fastHashFrame['relief'] = 'ridge'
-
-    label = tk.Label(
-        fastHashFrame,
-        text="Fast hash (compare files)",
-        font=("TkDefaultFont", 10, "bold"),
-    )
-    label.pack(anchor="n", side='top', fill="x", padx=(4,0), pady=0)
-
-    tk.Checkbutton(fastHashFrame, text="Very safe mode: calculate also FULL hash if fast hash says 'equal' (makes only sense with ☑ below)",
-        variable=chkbUseFastHashFull ).pack(anchor="w", side='top', pady=(4,0) )
-
-    tk.Checkbutton(fastHashFrame, text="Use fast file hashing for big files",
-        variable=chkbUseFastHash ).pack(anchor="w", side='left', pady=(4,4) )
-
-    label = tk.Label(fastHashFrame, text="Block: 2^")
-    label.pack(anchor="w", side='left', padx=(25,0), pady=(10,5), fill="x")
-
-    spinbox = tk.Spinbox( fastHashFrame, from_=9, to=30, wrap=True, width=3,
-                          textvariable=blockSize, command=block_update )
-    spinbox.pack(anchor="w", side='left', pady=(10,5), padx=(2,5))
-
-    # A helper label to show the selected value in a human readable format
-    label = tk.Label(fastHashFrame, textvariable=blockSizeHR)
-    label.pack(anchor="w", side='left', padx=5, pady=(10,5), fill="x")
-
-    # - - -
-
-    label = tk.Label(fastHashFrame, text=" x  #blocks:")
-    label.pack(anchor="w", side='left', padx=0, pady=(10,5), fill="x")
-
-    spinbox = tk.Spinbox( fastHashFrame, from_= 3, to=100, wrap=True, width=3,
-        textvariable=blockNum, command=block_update )
-    spinbox.pack(anchor="w", side='left', pady=(10,5), padx=(2,5))
-
-    label = tk.Label(fastHashFrame, textvariable=blockTotal)
-    label.pack(anchor="w", side='left', padx=0, pady=(10,5), fill="x")
-
-    block_update()
-
     # Configure the similarity threshold as a percentage and expose 0.00..1.00 to the application.
     similarity_percent = tk.DoubleVar(value=similarityThreshold.get() * 100)
     similarity_display = tk.StringVar()
@@ -2239,14 +2322,9 @@ def wmake_settings( tab: ttk.Frame ) -> None:
         similarityThreshold.set(normalized_value)
         similarity_display.set(f"{normalized_value:.2f}")
 
-    similarity_frame = ttk.Frame(sfSettings)
+    similarity_frame = ttk.LabelFrame(
+        sfSettings, text="Similarity Parameters", style=settings_frame_style )
     similarity_frame.pack(anchor="w", side="top", fill="x", padx=(4, 8), pady=4)
-    similarity_frame["borderwidth"] = 2
-    similarity_frame["relief"] = "ridge"
-
-    tk.Label(
-        similarity_frame, text="Similarity Parameters", font=("TkDefaultFont", 10, "bold")
-    ).pack(anchor="n", fill="x", padx=8, pady=(5, 2))
 
     movie_info_frame = tk.Frame(similarity_frame)
     movie_info_frame.pack(fill="x", padx=8, pady=(2, 5))
@@ -2257,7 +2335,28 @@ def wmake_settings( tab: ttk.Frame ) -> None:
         width=20,
     ).pack(side="left", padx=(8, 0), fill="x", expand=True)
 
-    tk.Label(similarity_frame, text="Similarity threshold (0..100):").pack(
+    tk.Checkbutton(
+        similarity_frame,
+        text="Only compare files with the same aspect ratio (or inside variation tolerance)",
+        variable=same_aspect_ratio,
+    ).pack(anchor="w", side="top", padx=8, pady=(2, 0))
+
+    aspect_ratio_frame = tk.Frame(similarity_frame)
+    aspect_ratio_frame.pack(fill="x", padx=8, pady=(0, 0))
+    tk.Label(
+        aspect_ratio_frame, text="      Maximum aspect-ratio variation (0..100%):"
+    ).pack(side="left", pady=(0, 0))
+    tk.Scale(
+        aspect_ratio_frame,
+        from_=0,
+        to=100,
+        resolution=1,
+        orient="horizontal",
+        variable=aspect_ratio_variation,
+        showvalue=True,
+    ).pack(side="left", fill="x", expand=True, padx=(8, 0), pady=(0, 5))
+
+    tk.Label(similarity_frame, text="Similarity threshold (0..100%):").pack(
         anchor="w", side="left", padx=(8, 0), pady=5
     )
     similarity_scale = tk.Scale(
