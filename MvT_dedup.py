@@ -14,8 +14,9 @@ import atexit
 import datetime
 import subprocess
 
-from blake3 import blake3
-from send2trash import send2trash
+from blake3 import blake3               # type: ignore
+from send2trash import send2trash       # type: ignore
+
 from PIL import Image, ImageTk, UnidentifiedImageError   # Pillow, for images
 import imagehash
 
@@ -1688,16 +1689,39 @@ def info_show_result(movie_info: dict, tile_path: str) -> None:
         widget.destroy()
 
     json_view = ScrolledText(info_show_result.frame_json, wrap=tk.NONE)
+    horizontal_scrollbar = ttk.Scrollbar(
+        info_show_result.frame_json,
+        orient=tk.HORIZONTAL,
+        command=json_view.xview,
+    )
+    json_view.configure(xscrollcommand=horizontal_scrollbar.set)
+    horizontal_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
     json_view.pack(fill=tk.BOTH, expand=True)
     json_view.insert(tk.END, json.dumps(movie_info, indent=2, ensure_ascii=False))
     json_view.configure(state=tk.DISABLED)
 
-    # Copy the image while the file is open so the label owns independent data.
+    # Keep the source image so it can be fitted to the tile frame as it resizes.
     with Image.open(tile_path) as tile_image:
-        photo = ImageTk.PhotoImage(tile_image.copy())
-    tile_view = ttk.Label(info_show_result.frame_tile, image=photo)
-    tile_view.image = photo
+        tile_source = tile_image.copy()
+
+    tile_view = ttk.Label(info_show_result.frame_tile)
     tile_view.pack(fill=tk.BOTH, expand=True)
+
+    def fit_tile_image(_event=None) -> None:
+        available_width = info_show_result.frame_tile.winfo_width()
+        available_height = info_show_result.frame_tile.winfo_height()
+        if available_width <= 1 or available_height <= 1:
+            return
+
+        fitted_image = tile_source.copy()
+        resampling_filter = getattr(Image, "Resampling", Image).LANCZOS
+        fitted_image.thumbnail((available_width, available_height), resampling_filter)
+        photo = ImageTk.PhotoImage(fitted_image)
+        tile_view.configure(image=photo)
+        tile_view.image = photo
+
+    info_show_result.frame_tile.bind("<Configure>", fit_tile_image)
+    fit_tile_image()
 
     # Let Tk paint the new result before processing the next movie.
     info_show_result.frame_json.update_idletasks()
@@ -1793,23 +1817,32 @@ def wmake_info( tab: ttk.Frame ) -> None:
     action_frame = ttk.Frame(tab)
     action_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
 
-    create_info_button = tk.Button( action_frame, text="Create tile and info files",
-        command=info_parse_folders, bg=colorButt[0], )
+    create_info_button = tk.Button(
+        action_frame,
+        text="Create tile and info files",
+        command=info_parse_folders,
+        bg=colorButt[0],
+    )
     create_info_button.pack(side=tk.LEFT)
 
-    stop_info_button = tk.Button( action_frame, text="STOP", command=info_stop, bg=colorButt[1], )
+    stop_info_button = tk.Button(
+        action_frame,
+        text="STOP",
+        command=info_stop,
+        bg=colorButt[1],
+    )
     stop_info_button.pack(side=tk.LEFT, padx=(5, 0))
 
     processing_label = tk.Label(action_frame, text="Processing: ")
     processing_label.pack(side=tk.LEFT, padx=(10, 0))
     info_parse_folder.processing_label = processing_label
 
-    # Give the left work area three quarters of the available width and the
-    # right work area the remaining quarter.
+    # Give the tile area four fifths of the available width and the JSON area
+    # the remaining fifth.
     content_frame = ttk.Frame(tab)
     content_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
-    content_frame.columnconfigure(0, weight=4)
-    content_frame.columnconfigure(1, weight=1)
+    content_frame.columnconfigure(0, weight=4, uniform="info_content")
+    content_frame.columnconfigure(1, weight=1, uniform="info_content")
     content_frame.rowconfigure(0, weight=1)
 
     frame_tile = ttk.Frame(content_frame, relief=tk.GROOVE, borderwidth=1)
@@ -1897,16 +1930,22 @@ def wmake_simi( tab: ttk.Frame ) -> None:
             image_area = tk.Frame(pane["tile_frame"], bg="#808080", height=500)
             image_area.pack(fill=tk.BOTH, expand=True)
             image_area.pack_propagate(False)
-            tk.Label( image_area, text="No matching movie", bg="#808080", fg="white",
+            tk.Label(
+                image_area,
+                text="No matching movie",
+                bg="#808080",
+                fg="white",
             ).pack(expand=True)
             return
 
         summary = movie_summary(movie)
         if similarity is not None:
             summary += f"  |  similarity: {similarity:.2f}"
-
-        ttk.Label( pane["tile_frame"], text=summary, font=("TkDefaultFont", 10, "bold"),
-                 ).pack(fill=tk.X, padx=4, pady=4)
+        ttk.Label(
+            pane["tile_frame"],
+            text=summary,
+            font=("TkDefaultFont", 10, "bold"),
+        ).pack(fill=tk.X, padx=4, pady=4)
 
         # Pack the summary first so the expanding image area cannot cover it.
         image_area = tk.Frame(pane["tile_frame"], bg="#808080", height=500)
@@ -1924,7 +1963,9 @@ def wmake_simi( tab: ttk.Frame ) -> None:
         tile_label.image = photo
         tile_label.pack(expand=True)
 
-        json_view = ScrolledText( pane["json_frame"], wrap=tk.NONE, font=("TkDefaultFont", 8), height=5 )
+        json_view = ScrolledText(
+            pane["json_frame"], wrap=tk.NONE, font=("TkDefaultFont", 8), height=5
+        )
         json_view.pack(fill=tk.BOTH, expand=True)
         json_view.insert(tk.END, json.dumps(movie["info"], indent=2, ensure_ascii=False))
         json_view.configure(state=tk.DISABLED)
@@ -2122,7 +2163,7 @@ def wmake_settings( tab: ttk.Frame ) -> None:
     previewMosaicType= tk_variables_register_and_init('PrvwMosT'       , 'string')
     previewMosaicFilm= tk_variables_register_and_init('PrvwMosFilm'    , 'string')
     previewTileQuali = tk_variables_register_and_init('TileQuality', 'integer')
-
+    
     movie_info_tile_db = tk_variables_register_and_init('MovieInfoTileDB', 'string')
     similarityThreshold    = tk_variables_register_and_init('SimiThreshold', 'double')
     similarity_time_window = tk_variables_register_and_init('SimiTimeWindow', 'integer')
@@ -2262,14 +2303,14 @@ def wmake_settings( tab: ttk.Frame ) -> None:
     label.pack(anchor="w", side='top', padx=8, pady=(8,0) )
     ttk.Radiobutton(previewFrame, text='Use *.png files for previews', value='png', variable=previewMosaicType).pack(side='top', fill='x', padx=24, pady=0)
     ttk.Radiobutton(previewFrame, text='Use *.jpg files for previews', value='jpg', variable=previewMosaicType).pack(side='top', fill='x', padx=24, pady=0)
-
+                                                                                                                     
     quality_frame = tk.Frame(previewFrame)
     quality_frame.pack(anchor="w", side="top", fill="x", padx=24, pady=(0, 12))
     tk.Label(quality_frame, text="JPG quality (1..100):").pack(side="left")
     tk.Scale(quality_frame, from_=1, to=100, resolution=1, orient="horizontal",
              variable=previewTileQuali, showvalue=True
     ).pack(side="left", fill="x", expand=True, padx=(0, 8))
-
+ 
     label = tk.Label(previewFrame, text="Mosaic pattern:  columns(X):")
     label.pack(anchor="w", side='left', padx=(8,0), pady=(0,5))
 
