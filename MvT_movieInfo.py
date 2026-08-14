@@ -210,6 +210,8 @@ def _run_ffprobe(pathfile, count_frames=False):
         pathfile,
     ]
 
+    print(" ".join(cmd))
+
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     return json.loads(result.stdout)
 
@@ -300,7 +302,7 @@ def _to_bool_from_int(value):
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-def MvT_movie_info(pathfile, use_count_frames_fallback=True, estimate_frames_fallback=True):
+def MvT_movie_info(pathfile, use_count_frames_fallback=False, estimate_frames_fallback=True):
     """Collect normalized video, audio, format, and faststart information.
 
     Args:
@@ -320,6 +322,9 @@ def MvT_movie_info(pathfile, use_count_frames_fallback=True, estimate_frames_fal
 
     # Normalize the path so ffprobe and the MP4 scanner inspect the same file.
     pathfile = str(Path(pathfile).expanduser().resolve())
+
+    print("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+    print(f"Get info: {pathfile}")
 
     # Probe the file once for the primary format and stream metadata.
     data = _run_ffprobe(pathfile, count_frames=False)
@@ -413,13 +418,15 @@ def MvT_movie_info(pathfile, use_count_frames_fallback=True, estimate_frames_fal
     if video_bit_rate is not None and duration is not None:
         estimated_video_size_bytes = int(video_bit_rate * duration / 8)
 
+    print(f"Have info!")
+
     # Return one stable structure for callers, including the container check.
-    return {    "format": 
+    return {    "format":
                 {
                     "size": fsize,
                     "duration": duration,
                 },
-                "video": 
+                "video":
                 {
                     "width": _to_int_or_none(video_stream.get("width")),
                     "height": _to_int_or_none(video_stream.get("height")),
