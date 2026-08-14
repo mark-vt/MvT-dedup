@@ -12,6 +12,7 @@ import time
 import shlex
 import atexit
 import datetime
+import shutil
 import subprocess
 
 from blake3 import blake3               # type: ignore
@@ -1850,6 +1851,35 @@ def info_parse_folders() -> None:
     else:
         status_write("Movie-info processing done!")
 
+def info_delete_all() -> None:
+    """Delete every movie-info database folder below the enabled search folders."""
+    database_name = tkVars['MovieInfoTileDB'].get()
+    deleted_count = 0
+
+    for folder, enabled in searchFolders.items():
+        if enabled == 0:
+            continue
+
+        for dirpath, dirnames, _filenames in os.walk(folder):
+            database_dirs = [dirname for dirname in dirnames if dirname == database_name]
+            for dirname in database_dirs:
+                database_path = os.path.join(dirpath, dirname)
+                try:
+                    if tkVars['DeleteToTrash'].get():
+                        send2trash(database_path)
+                        status_write(f"MvT_DB folder moved to trash: {database_path}")
+                    else:
+                        shutil.rmtree(database_path)
+                        status_write(f"MvT_DB folder deleted: {database_path}")
+                    deleted_count += 1
+                except OSError as error:
+                    status_write(f"Could not delete MvT_DB folder '{database_path}': {error}")
+
+                # Do not descend into a folder that was just removed.
+                dirnames.remove(dirname)
+
+    status_write(f"Deleted {deleted_count} MvT_DB folder(s).")
+
 def wmake_info( tab: ttk.Frame ) -> None:
     """Build the 'Create info' tab UI for creating JSON info and movie tile sheets."""
 
@@ -1869,9 +1899,17 @@ def wmake_info( tab: ttk.Frame ) -> None:
         action_frame,
         text="STOP",
         command=info_stop,
-        bg=colorButt[1],
+        bg=colorButt[2],
     )
     stop_info_button.pack(side=tk.LEFT, padx=(5, 0))
+
+    delete_info_button = tk.Button(
+        action_frame,
+        text="Delete tile/info files",
+        command=info_delete_all,
+        bg=colorButt[1],
+    )
+    delete_info_button.pack(side=tk.LEFT, padx=(5, 0))
 
     processing_label = tk.Label(action_frame, text="Processing: ")
     processing_label.pack(side=tk.LEFT, padx=(10, 0))

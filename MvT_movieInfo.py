@@ -2,12 +2,13 @@
 #!packages/bin/python
 # ------------------------------------------------------------------------------
 
-import json
 import re
-import subprocess
-from fractions import Fraction
+import json
 import argparse
+import subprocess
 from pathlib import Path
+from datetime import timedelta
+from fractions import Fraction
 
 # --------------------------------- CODE ---------------------------------------
 
@@ -425,6 +426,7 @@ def MvT_movie_info(pathfile, use_count_frames_fallback=False, estimate_frames_fa
                 {
                     "size": fsize,
                     "duration": duration,
+                    "time": str(timedelta(seconds=int(duration))) if duration is not None else 'unknown',
                 },
                 "video":
                 {
