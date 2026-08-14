@@ -416,7 +416,8 @@ def init_data_load() -> None:
                  'DeleteToTrash'      : False ,
                  'SaveMarkTexts'      : True ,
                  'SaveFileDB'         : False,
-                 'SearchFolders'      : { os.path.expanduser('~') : 1 },
+                 'SearchFolders'      : { os.path.expanduser('~') : 0 ,
+                                          os.getcwd(): 1 },
                  'SearchFoldLast'     : searchFolderLast,
                  'DelEmptyFolder'     : True,
                  'SaveMarkTexts'      : True,
@@ -1727,6 +1728,33 @@ def info_show_result(movie_info: dict, tile_path: str) -> None:
     info_show_result.frame_json.update_idletasks()
     info_show_result.frame_tile.update_idletasks()
 
+def info_remove_orphans(output_dir: str, movie_names: set[str]) -> None:
+    """Remove generated info files whose source movie is no longer present."""
+    if not os.path.isdir(output_dir):
+        return
+    
+    status_write(f"Removing orphaned info/tile files in: '{output_dir}'")
+
+    expected_movies = {movie_name.casefold() for movie_name in movie_names}
+    generated_suffixes = (".json", ".jpg", ".png")
+
+    try:
+        generated_files = os.listdir(output_dir)
+    except OSError as error:
+        status_write(f"Could not inspect movie-info folder '{output_dir}': {error}")
+        return
+
+    orphan_bases = {
+        filename[:-len(suffix)].casefold(): filename[:-len(suffix)]
+        for filename in generated_files
+        for suffix in generated_suffixes
+        if filename.casefold().endswith(suffix.casefold())
+        and filename[:-len(suffix)].casefold() not in expected_movies
+    }
+
+    for movie_base in orphan_bases.values():
+        delete_movie_info_files(os.path.join(os.path.dirname(output_dir), movie_base))
+
 def info_parse_folder(folder: str) -> None:
     """Process a single search folder for movie text and tile information."""
     global infoStopFlag
@@ -1737,6 +1765,9 @@ def info_parse_folder(folder: str) -> None:
             return
 
         dirnames[:] = [dirname for dirname in dirnames if dirname != tkVars['MovieInfoTileDB'].get()]
+        movie_names = set()
+        
+        status_write(f"Scanning folder for movies: '{dirpath}'")
 
         for filename in filenames:
             if infoStopFlag:
@@ -1749,6 +1780,7 @@ def info_parse_folder(folder: str) -> None:
             }
             if os.path.splitext(filename)[1].lower() not in movie_extensions:
                 continue
+            movie_names.add(filename)
 
             movie_path = os.path.join(dirpath, filename)
             output_dir = os.path.join(dirpath, tkVars['MovieInfoTileDB'].get())
@@ -1764,7 +1796,7 @@ def info_parse_folder(folder: str) -> None:
                     text=f"Processing: {filename}"
                 )
                 info_parse_folder.processing_label.update_idletasks()
-            status_write(f"Create movie info: {movie_path}")
+            status_write(f"Create movie info: {filename}")
 
             try:
                 # Reuse both generated files when the recorded source size is unchanged.
@@ -1773,7 +1805,7 @@ def info_parse_folder(folder: str) -> None:
                         cached_movie_info = json.load(info_file)
                     cached_size = cached_movie_info.get("format", {}).get("size")
                     if cached_size == os.path.getsize(movie_path):
-                        status_write(f"Movie info unchanged: {movie_path}")
+                        status_write(f"Movie info unchanged: {filename}")
                         continue
 
                 movie_info = MvT_movie_info(movie_path)
@@ -1791,6 +1823,14 @@ def info_parse_folder(folder: str) -> None:
                 info_show_result(movie_info, tile_path)
             except (OSError, subprocess.SubprocessError, ValueError) as error:
                 status_write(f"Could not process {movie_path}: {error}")
+
+        if infoStopFlag:
+            return
+
+        info_remove_orphans(
+            os.path.join(dirpath, tkVars['MovieInfoTileDB'].get()),
+            movie_names,
+        )
 
 def info_parse_folders() -> None:
     """Process enabled search folders for movie text and tile information."""
