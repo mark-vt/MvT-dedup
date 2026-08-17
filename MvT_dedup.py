@@ -1992,6 +1992,10 @@ def wmake_simi( tab: ttk.Frame ) -> None:
             tile_frame (ttk.Frame): The Tkinter frame to display the summary in.
             pane_index (int): 0 for the reference pane, 1 for the comparison pane.
         """
+        form = movie["info"].get("format", {})
+        size = form.get('size')
+        hsize = humread( size )
+
         video = movie["info"].get("video", {})
         width = video.get("width") or "?"
         height = video.get("height") or "?"
@@ -2005,8 +2009,9 @@ def wmake_simi( tab: ttk.Frame ) -> None:
         # Store the reference values for comparison.
         values = [
             duration_text,
+            hsize,
             f"{width}x{height}",
-            f"{fps} fps",
+            f"{fps:.3f} fps",
             codec.upper(),
             f"{mbit_rate} MBit/s",
         ]
@@ -2050,16 +2055,13 @@ def wmake_simi( tab: ttk.Frame ) -> None:
         for widget in pane["json_frame"].winfo_children():
             widget.destroy()
 
+        # if not a valid movie, write "no movie" to movie area
         if movie is None:
             pane["title"].config(text="No matching movie")
             image_area = tk.Frame(pane["tile_frame"], bg="#808080", height=500)
             image_area.pack(fill=tk.BOTH, expand=True)
             image_area.pack_propagate(False)
-            tk.Label(
-                image_area,
-                text="No matching movie",
-                bg="#808080",
-                fg="white",
+            tk.Label( image_area, text="No matching movie", bg="#808080", fg="white",
             ).pack(expand=True)
             return
 
@@ -2088,7 +2090,9 @@ def wmake_simi( tab: ttk.Frame ) -> None:
         json_view.pack(fill=tk.BOTH, expand=True)
         json_view.insert(tk.END, json.dumps(movie["info"], indent=2, ensure_ascii=False))
         json_view.configure(state=tk.DISABLED)
-        pane["title"].config(text=os.path.basename(movie["movie_path"]))
+        last4 = os.sep.join(movie["movie_path"].split(os.sep)[-4:])
+        pane["title"].config(text=last4)
+
 
     def display_pair() -> None:
         """Display the current pair of movies and their similarity score.
@@ -2128,6 +2132,7 @@ def wmake_simi( tab: ttk.Frame ) -> None:
                     return
                 # Do not descend into the generated MvT_DB folder.
                 dirnames[:] = [dirname for dirname in dirnames if dirname != tkVars['MovieInfoTileDB'].get()]
+                status_write( f"Scan: {dirpath}")
                 for filename in filenames:
                     if simiStopFlag:
                         return
@@ -2289,11 +2294,7 @@ def wmake_simi( tab: ttk.Frame ) -> None:
         pair_position_labels.append(pair_position_label)
         tk.Button(controls, text="Prev", command=lambda: move_pair(-1), bg="#99ccff").pack(side=tk.LEFT, padx=2)
         tk.Button(controls, text="Next", command=lambda: move_pair(1), bg="#99ccff").pack(side=tk.LEFT, padx=2)
-        simi_state["panes"].append({
-            "title": title,
-            "tile_frame": tile_frame,
-            "json_frame": json_frame,
-        })
+        simi_state["panes"].append({"title": title, "tile_frame": tile_frame, "json_frame": json_frame})
 
 # ------------------------------------------------------------------------------
 # Settings ---------------------------------------------------------------------
