@@ -211,7 +211,7 @@ def _run_ffprobe(pathfile, count_frames=False):
         pathfile,
     ]
 
-    print(" ".join(cmd))
+    # print(" ".join(cmd))
 
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     return json.loads(result.stdout)
@@ -419,7 +419,7 @@ def MvT_movie_info(pathfile, use_count_frames_fallback=False, estimate_frames_fa
     if video_bit_rate is not None and duration is not None:
         estimated_video_size_bytes = int(video_bit_rate * duration / 8)
 
-    print(f"Have info!")
+    # print(f"Have info!")
 
     # Return one stable structure for callers, including the container check.
     return {    "format":

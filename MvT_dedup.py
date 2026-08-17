@@ -213,8 +213,7 @@ def show_preview_win( pathfile: str ) -> None:
             outFile = os.path.join(output_dir, f'{os.path.basename(pathfile)}.{ext}')
             # Create a preview file
             try:
-                print("--------------------------------------------------------")
-                print(outFile)
+                print("Show tile preview.")
                 created = MvT_preview_tiles(pathfile,
                                             int(tkVars['PrvwMosX'].get() ),
                                             int(tkVars['PrvwMosY'].get() ),
@@ -1813,8 +1812,7 @@ def info_parse_folder(folder: str) -> None:
                 with open(info_path, "w", encoding="utf-8") as info_file:
                     json.dump(movie_info, info_file, indent=2)
 
-                print("--------------------------------------------------------")
-                print(tile_path)
+                print("Creating movie tile sheet...")
                 MvT_preview_tiles(
                     movie_path,
                     int(tkVars['PrvwMosX'].get()),
@@ -1985,7 +1983,15 @@ def wmake_simi( tab: ttk.Frame ) -> None:
                 print("Warning: SciPy not available or incompatible; using dhash instead of phash for tile similarity.")
         return max(0.0, min(1.0, 1.0 - (first_hash - second_hash) / first_hash.hash.size))
 
-    def movie_summary(movie: dict) -> str:
+    def movie_summary(movie: dict, similarity: float | None, tile_frame: ttk.Frame, pane_index: int) -> None:
+        """Display a summary of the movie parameters above the given tile frame.
+
+        Args:
+            movie (dict): The movie information dictionary.
+            similarity (float | None): The similarity score compared to a reference movie.
+            tile_frame (ttk.Frame): The Tkinter frame to display the summary in.
+            pane_index (int): 0 for the reference pane, 1 for the comparison pane.
+        """
         video = movie["info"].get("video", {})
         width = video.get("width") or "?"
         height = video.get("height") or "?"
@@ -1995,9 +2001,50 @@ def wmake_simi( tab: ttk.Frame ) -> None:
         mbit_rate = f"{bit_rate / 1_000_000:.2f}" if bit_rate else "?"
         duration = movie_duration(movie)
         duration_text = f"{duration:.1f}s" if duration is not None else "?s"
-        return f"{duration_text}  |  {width}x{height}  |  {fps} fps  |  {codec.upper()}  |  {mbit_rate} MBit/s"
 
-    def show_movie(pane: dict, movie: dict | None, similarity: float | None) -> None:
+        # Store the reference values for comparison.
+        values = [
+            duration_text,
+            f"{width}x{height}",
+            f"{fps} fps",
+            codec.upper(),
+            f"{mbit_rate} MBit/s",
+        ]
+        if similarity is not None:
+            values.append(f"similarity: {similarity:.2f}")
+
+        # Determine if this is the source pane (index 0) and store the reference values if so.
+        if pane_index == 0:
+            movie_summary.reference_values = values
+            
+        # Use the reference values for comparison if they exist; otherwise, use the current values.            
+        reference_values = getattr(movie_summary, "reference_values", values)
+
+        summary_view = tk.Text( tile_frame, height=1, wrap=tk.NONE, borderwidth=0,
+                                highlightthickness=0, font=("TkDefaultFont", 10, "bold") )
+        summary_view.pack(fill=tk.X, padx=4, pady=4)
+        summary_view.tag_configure("difference", foreground="red")
+        for index, value in enumerate(values):
+            # Insert a separator between values, except before the first value.
+            if index:
+                summary_view.insert(tk.END, "  |  ")
+            # Highlight the value in red if it differs from the reference value in the source pane.
+            tag = "difference" if pane_index == 1 and value != reference_values[index] else None
+            summary_view.insert(tk.END, value, tag)
+        summary_view.configure(state=tk.DISABLED)
+
+    # Initialize the reference values for comparison function above.
+    movie_summary.reference_values = []
+
+    def show_movie(pane: dict, pane_index: int, movie: dict | None, similarity: float | None) -> None:
+        """Display the movie summary and tile image in the given pane.
+
+        Args:
+            pane (dict): The dictionary containing the tile and JSON frames.
+            pane_index (int): 0 for the reference pane, 1 for the comparison pane.
+            movie (dict | None): The movie information dictionary or None if no match.
+            similarity (float | None): The similarity score compared to a reference movie.
+        """
         for widget in pane["tile_frame"].winfo_children():
             widget.destroy()
         for widget in pane["json_frame"].winfo_children():
@@ -2016,20 +2063,15 @@ def wmake_simi( tab: ttk.Frame ) -> None:
             ).pack(expand=True)
             return
 
-        summary = movie_summary(movie)
-        if similarity is not None:
-            summary += f"  |  similarity: {similarity:.2f}"
-        ttk.Label(
-            pane["tile_frame"],
-            text=summary,
-            font=("TkDefaultFont", 10, "bold"),
-        ).pack(fill=tk.X, padx=4, pady=4)
+        # Display the movie parameters above the tile image.
+        movie_summary(movie, similarity, pane["tile_frame"], pane_index)
 
         # Pack the summary first so the expanding image area cannot cover it.
         image_area = tk.Frame(pane["tile_frame"], bg="#808080", height=500)
         image_area.pack(fill=tk.BOTH, expand=True)
         image_area.pack_propagate(False)
 
+        # Load the tile image and fit it to the available area while maintaining aspect ratio.
         with Image.open(movie["tile_path"]) as tile_image:
             tile_copy = tile_image.copy()
         image_area.update_idletasks()
@@ -2041,15 +2083,17 @@ def wmake_simi( tab: ttk.Frame ) -> None:
         tile_label.image = photo
         tile_label.pack(expand=True)
 
-        json_view = ScrolledText(
-            pane["json_frame"], wrap=tk.NONE, font=("TkDefaultFont", 8), height=5
-        )
+        # Display the JSON metadata in a scrollable text area below the tile image.
+        json_view = ScrolledText( pane["json_frame"], wrap=tk.NONE, font=("TkDefaultFont", 8), height=5 )
         json_view.pack(fill=tk.BOTH, expand=True)
         json_view.insert(tk.END, json.dumps(movie["info"], indent=2, ensure_ascii=False))
         json_view.configure(state=tk.DISABLED)
         pane["title"].config(text=os.path.basename(movie["movie_path"]))
 
     def display_pair() -> None:
+        """Display the current pair of movies and their similarity score.
+        If no pairs are available, clear the panes and show a message. 
+        """
         pair_position = (
             f"{simi_state['pair_index'] + 1} of {len(simi_state['pairs'])}"
             if simi_state["pairs"]
@@ -2058,14 +2102,16 @@ def wmake_simi( tab: ttk.Frame ) -> None:
         for pair_position_label in pair_position_labels:
             pair_position_label.config(text=pair_position)
         if not simi_state["pairs"]:
-            for pane in simi_state["panes"]:
-                show_movie(pane, None, None)
+            for pane_index, pane in enumerate(simi_state["panes"]):
+                show_movie(pane, pane_index, None, None)
             return
         pair = simi_state["pairs"][simi_state["pair_index"]]
-        for index, pane in enumerate(simi_state["panes"]):
-            show_movie(pane, pair[index], pair[2])
+        movie_summary.reference_values = []
+        for pane_index, pane in enumerate(simi_state["panes"]):
+            show_movie(pane, pane_index, pair[pane_index], pair[2])
 
     def find_similar_movies() -> None:
+        """ Find and display pairs of movies that are similar in duration and tile appearance."""
         global simiStopFlag
 
         simiStopFlag = False
@@ -2076,11 +2122,11 @@ def wmake_simi( tab: ttk.Frame ) -> None:
 
         # Read all usable movie metadata, then sort it by duration for efficient matching.
         for folder in searchFolders:
-            if searchFolders[folder] == 0:
-                continue
+            if searchFolders[folder] == 0:  continue
             for dirpath, dirnames, filenames in os.walk(folder):
                 if simiStopFlag:
                     return
+                # Do not descend into the generated MvT_DB folder.
                 dirnames[:] = [dirname for dirname in dirnames if dirname != tkVars['MovieInfoTileDB'].get()]
                 for filename in filenames:
                     if simiStopFlag:
@@ -2108,6 +2154,8 @@ def wmake_simi( tab: ttk.Frame ) -> None:
                     if movie_duration(movie) is not None:
                         movies.append(movie)
 
+        # Sort the movies by duration to allow efficient comparison of 
+        # only those within the configured time window.
         movies.sort(key=lambda movie: movie_duration(movie))
         time_window = float(tkVars["SimiTimeWindow"].get())
         threshold = float(tkVars["SimiThreshold"].get())
@@ -2139,27 +2187,52 @@ def wmake_simi( tab: ttk.Frame ) -> None:
         status_write(f"Found {len(pairs)} similar movie pairs")
 
     def simi_stop() -> None:
+        """ Request that the similarity search stops after the current operation."""
         global simiStopFlag
         simiStopFlag = True
 
     def delete_movie(pane_index: int) -> None:
-        if not simi_state["pairs"]:
-            return
+        """Delete the movie in the given pane and remove it from the list of pairs.
+
+        Args:
+            pane_index (int): 0 for the reference pane, 1 for the comparison pane.
+
+        Returns:
+            None
+        """
+        
+        # If there are no pairs, do nothing.
+        if not simi_state["pairs"]:   return
+        
+        # Remove the movie from the current pair and delete its associated files.
         pair = simi_state["pairs"][simi_state["pair_index"]]
         movie = pair[pane_index]
         for path in (movie["movie_path"], movie["info_path"], movie["tile_path"]):
             if os.path.exists(path):
                 delete_file(path)
+                
+        # Remove any pairs that include the deleted movie and update the pair index.                
         simi_state["pairs"] = [
             candidate for candidate in simi_state["pairs"]
             if movie not in candidate[:2]
         ]
+        
+        # Update the pair index to ensure it is within the valid range after deletion.
         simi_state["pair_index"] = min(
             simi_state["pair_index"], max(0, len(simi_state["pairs"]) - 1)
         )
         display_pair()
 
     def move_pair(offset: int) -> None:
+        """Move the current pair index by the given offset and display the new pair.
+
+        Args:
+            offset (int): The number of positions to move the pair index.
+
+        Returns:
+            None
+        """
+
         if simi_state["pairs"]:
             simi_state["pair_index"] = max(
                 0,
@@ -2180,6 +2253,7 @@ def wmake_simi( tab: ttk.Frame ) -> None:
         text="Process 'Create movie info' before you press 'Find similar movies' button.",
     ).pack(side=tk.LEFT, padx=(10, 0))
 
+    # Build the two movie panes below the action controls.
     content_frame = ttk.Frame(tab)
     content_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
     content_frame.columnconfigure(0, weight=1)
@@ -2189,26 +2263,37 @@ def wmake_simi( tab: ttk.Frame ) -> None:
 
     # Build two equal panes, each with tile, metadata, and navigation controls.
     for pane_index in range(2):
+        # Create a frame for each pane with a groove border.
         pane_frame = ttk.Frame(content_frame, relief=tk.GROOVE, borderwidth=1)
         pane_frame.grid(row=0, column=pane_index, sticky="nsew", padx=3)
         pane_frame.rowconfigure(1, weight=3)
         pane_frame.rowconfigure(2, weight=2)
         pane_frame.columnconfigure(0, weight=1)
+        
+        #  Add a title label, tile frame, JSON frame, and navigation controls to each pane.
         title = ttk.Label(pane_frame, text="No movie selected")
         title.grid(row=0, column=0, sticky="ew", padx=4, pady=4)
         tile_frame = ttk.Frame(pane_frame)
         tile_frame.grid(row=1, column=0, sticky="nsew")
         json_frame = ttk.Frame(pane_frame)
         json_frame.grid(row=2, column=0, sticky="nsew")
+        
+        # Add navigation controls below the JSON frame, including a delete button and pair position label.
         controls = ttk.Frame(pane_frame)
         controls.grid(row=3, column=0, sticky="ew", padx=4, pady=4)
         tk.Button(controls, text="Delete", command=lambda i=pane_index: delete_movie(i), bg="#ff9999").pack(side=tk.LEFT)
+        
+        # Add a label to show the current pair position and buttons to navigate between pairs.
         pair_position_label = tk.Label(controls, text="0 of 0")
         pair_position_label.pack(side=tk.LEFT, padx=10)
         pair_position_labels.append(pair_position_label)
         tk.Button(controls, text="Prev", command=lambda: move_pair(-1), bg="#99ccff").pack(side=tk.LEFT, padx=2)
         tk.Button(controls, text="Next", command=lambda: move_pair(1), bg="#99ccff").pack(side=tk.LEFT, padx=2)
-        simi_state["panes"].append({"title": title, "tile_frame": tile_frame, "json_frame": json_frame})
+        simi_state["panes"].append({
+            "title": title,
+            "tile_frame": tile_frame,
+            "json_frame": json_frame,
+        })
 
 # ------------------------------------------------------------------------------
 # Settings ---------------------------------------------------------------------
@@ -2502,10 +2587,13 @@ def main( root: tk.Tk ) -> None:              # Fill my main windows with life
     if sys.version_info < (3, 6):
         sys.exit("ERROR: This script requires Python 3.6 or higher.")
 
+    # Create the menu bar, status area, and tabs for the application
     wmake_menu( root )
 
+    # Create the status area at the bottom of the window
     wmake_status_area( root )
 
+    # Create the tabs for the application
     tabs = { 'FOLD' : [' Select Folder ', None ],
              'EXCL' : [' Exclude from selection ', None ],
              'FIND' : [' Find Dups ', None ],
@@ -2515,6 +2603,7 @@ def main( root: tk.Tk ) -> None:              # Fill my main windows with life
              'PARM' : [' Settings ', None ] }
     wmake_tabs( root, tabs )
 
+    # Create the content for each tab
     wmake_search_folder( tabs['FOLD'][1] )
     wmake_exclude( tabs['EXCL'][1] )
     wmake_list( tabs['FIND'][1] )
@@ -2559,7 +2648,6 @@ if __name__ == "__main__":
 
     # Configure the root window
     root.bind("<Configure>", on_win_change)
-
     root.geometry(f"{initData['winSizeX']}x{initData['winSizeY']}+{initData['winPosX']}+{initData['winPosY']}")
     root.title('MvT De-Duplicator')
 

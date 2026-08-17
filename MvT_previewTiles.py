@@ -18,31 +18,48 @@ def MvT_preview_tiles(video_path, cols, rows, width, quality, out_tile_path):
             return float(result.stdout.strip())
         except:
             return None
+    
+    def get_image_with_tiles(video_path, duration, cols, rows, width):
+        """Extract all requested keyframes and assemble the tiles in one ffmpeg call."""
+        
+        # Calculate the number of tiles and the time step between them
+        num_tiles = cols * rows
+        step = duration / num_tiles
+        offset = step / 2
+        
+        # This is a filter for ffmpeg.  Is selects the first keyframe in 
+        # each interval centered on a requested timestamp.
+        select_expr = ( f"isnan(prev_selected_t)*gte(t\\,{offset})+"
+                        f"gt(floor((t-{offset})/{step})\\,"
+                        f"floor((prev_selected_t-{offset})/{step}))" ) 
 
-    def gen_ts(duration, numPics):
-        """Create numPics timestamps spread over movie"""
-        step = duration / numPics
-        offs = step / 2
-        return [(i * step + offs) for i in range(numPics)]
-    import subprocess
-
-    def format_ts(seconds):
-        """Format timestamp to ffmpeg compliant format"""
-        h = int(seconds // 3600)
-        m = int((seconds % 3600) // 60)
-        s = seconds % 60
-        return f"{h:02d}:{m:02d}:{s:06.3f}"
-
-    def grab_frame_bytes(video_path, ts_sec, width):
-        """Pick a single I-Frame at specified point in time, convert to width and quality and return in ram"""
+        # Build the ffmpeg command to extract the tiles and assemble them into a single image
         cmd = [
             "ffmpeg",
             "-loglevel", "error",
             "-skip_frame", "nokey",
-            "-ss", format_ts(ts_sec),
             "-i", str(video_path),
+            "-vf", f"select={select_expr},scale={width}:-1,tile={cols}x{rows}",
             "-vframes", "1",
+            "-f", "image2pipe",
+            "-vcodec", "png",
+            "-"
+        ]
+        
+        #print("ffmpeg command:", " ".join(cmd))
+        
+        # Run the command and return the output image bytes
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        return result.stdout
+
+    def get_first_frame_only(video_path, width):
+        """Extract the first video frame as a PNG. Used if no tiles could be extracted."""
+        cmd = [
+            "ffmpeg",
+            "-loglevel", "error",
+            "-i", str(video_path),
             "-vf", f"scale={width}:-1",
+            "-frames:v", "1",
             "-f", "image2pipe",
             "-vcodec", "png",
             "-"
@@ -50,34 +67,27 @@ def MvT_preview_tiles(video_path, cols, rows, width, quality, out_tile_path):
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
         return result.stdout
 
-    # And now do the work ...
-
-    # Get array of timestamps, one for every tile
-    timestamps = gen_ts(video_get_duration( video_path ), cols * rows)
-
-    # Try to grab frames at those timestamps, and store them in a list
-    frames = []
-    for ts in timestamps:
-        try:
-            img_bytes = grab_frame_bytes(video_path, ts, width)
-            with Image.open(BytesIO(img_bytes)) as frame:
-                frames.append(frame.convert("RGB"))
-        except (OSError, ValueError, subprocess.SubprocessError) as error:
-            print(f"Tile: {ts}: Could not extract tile: {error}")
-            break
-        else:
-            print(f"Tile: {ts}: ok")
-
-    # If no frames were successfully grabbed, return False -> no tile file created
-    if not frames:
+    # Get video duration and validate parameters
+    duration = video_get_duration(video_path)
+    if duration is None or duration <= 0 or cols <= 0 or rows <= 0 or width <= 0:
         return False
 
-    tile_width = max(frame.width for frame in frames)
-    tile_height = max(frame.height for frame in frames)
-    mosaic = Image.new("RGB", (tile_width * cols, tile_height * rows), "black")
-    for index, frame in enumerate(frames):
-        mosaic.paste(frame, ((index % cols) * tile_width, (index // cols) * tile_height))
+    # Generate the preview tiles or fallback to the first frame if no tiles could be extracted
+    try:
+        img_bytes = get_image_with_tiles(video_path, duration, cols, rows, width)
+        if not img_bytes:
+            print("No tiles extracted; showing the first video frame.")
+            img_bytes = get_first_frame_only(video_path, width * cols)
+        with Image.open(BytesIO(img_bytes)) as frame:
+            mosaic = frame.convert("RGB")
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        print(f"Could not extract preview tiles: {error}")
+        return False
 
+    if not mosaic:
+        return False
+
+    # Store the mosaic image to the specified output path
     output_extension = os.path.splitext(out_tile_path)[1].lower()
     if output_extension == ".png":
         mosaic.save(out_tile_path, format="PNG")
@@ -93,21 +103,19 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser( description="Create -c x -r tiles of a video file." )
     parser.add_argument("-i", "--inputfile", required=True, help="Pfad zur Video-Datei")
-    parser.add_argument("-o", "--outputfile", required=True, help="Pfad zum finalen Tile")
-    #parser.add_argument("-f", "--format", choices=["jpg","png"], default="jpg", help="Dateiformat des Output-Bildes")
-    parser.add_argument("-w", "--width", type=int, default=320, help="Breite einzelner Frames (px)")
-    parser.add_argument("-c", "--columns", type=int, default=4, help="Anzahl der Spalten im Tile")
-    parser.add_argument("-r", "--rows", type=int, default=3, help="Anzahl der Reihen im Tile")
-    parser.add_argument("-q", "--quality", type=int, default=4, help="JPEG-Qualität (1=best, 31=schlecht)")
+    parser.add_argument("-o", "--outputfile", required=True, help="Pfad zum finalen Tile, .jpg oder .png")
+    parser.add_argument("-w", "--width", type=int, default=320, help="Width of single tile (px)")
+    parser.add_argument("-c", "--columns", type=int, default=4, help="Number of tiles horizontal")
+    parser.add_argument("-r", "--rows", type=int, default=3, help="Number of tiles vertical")
+    parser.add_argument("-q", "--quality", type=int, default=60, help="JPEG quality (95=best, 0=worst)")
     args = parser.parse_args()
 
     print("Inputfile:", args.inputfile)
     print("Outputfile:", args.outputfile)
-    #print("Format:", args.format)
     print("Width:", args.width)
     print("Columns:", args.columns)
     print("Rows:", args.rows)
     print("Quality:", args.quality)
 
-    MvT_preview_tiles(args.inputfile, args.columns, args.rows, args.width,
-                        args.quality, args.outputfile)
+    MvT_preview_tiles(args.inputfile, args.columns, args.rows, 
+                      args.width, args.quality, args.outputfile)
