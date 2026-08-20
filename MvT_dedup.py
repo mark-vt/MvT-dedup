@@ -438,6 +438,7 @@ def init_data_load() -> None:
                  'SimiTimeWindow'     : 11,
                  'SimiAspectRatio'    : False,
                  'SimiAspectRatioVari': 1,
+                 'PathDisplayDepth'   : 4,
                  'WinZoomFactor'      : 1.0
                }
 
@@ -454,7 +455,6 @@ def init_data_load() -> None:
     searchFolders    = initData['SearchFolders']
     searchFolderLast = initData['SearchFoldLast']
 
-
 # Check some data about windows geometry if it makes sense, root window needed!
 def init_win_geo_data_check( root: tk.Tk ) -> None:
     """Clamp stored window size and position in initData to fit within the current screen dimensions."""
@@ -464,8 +464,8 @@ def init_win_geo_data_check( root: tk.Tk ) -> None:
 
     if initData['winSizeX'] > screenMaxX:   initData['winSizeX'] = screenMaxX
     if initData['winSizeY'] > screenMaxY:   initData['winSizeY'] = screenMaxY
-    if initData['winPosX'] < 0:  initData['winPosX'] = 0
-    if initData['winPosY'] < 0:  initData['winPosY'] = 0
+    if initData['winPosX']  < 0:            initData['winPosX'] = 0
+    if initData['winPosY']  < 0:            initData['winPosY'] = 0
     if (initData['winPosX'] + initData['winSizeX']) > screenMaxX:   initData['winPosX'] = screenMaxX - initData['winSizeX']
     if (initData['winPosY'] + initData['winSizeY']) > screenMaxY:   initData['winPosY'] = screenMaxY - initData['winSizeY']
 
@@ -2086,12 +2086,15 @@ def wmake_simi( tab: ttk.Frame ) -> None:
         tile_label.pack(expand=True)
 
         # Display the JSON metadata in a scrollable text area below the tile image.
-        json_view = ScrolledText( pane["json_frame"], wrap=tk.NONE, font=("TkDefaultFont", 8), height=5 )
+        json_view = ScrolledText( pane["json_frame"], wrap=tk.NONE, font=("TkDefaultFont", 8), height=6 )
         json_view.pack(fill=tk.BOTH, expand=True)
         json_view.insert(tk.END, json.dumps(movie["info"], indent=2, ensure_ascii=False))
         json_view.configure(state=tk.DISABLED)
-        last4 = os.sep.join(movie["movie_path"].split(os.sep)[-4:])
-        pane["title"].config(text=last4)
+        
+        # Write the configured number of path components above the tile image.
+        path_display_depth = tkVars['PathDisplayDepth'].get()
+        path_display = os.sep.join(movie["movie_path"].split(os.sep)[-path_display_depth:])
+        pane["title"].config(text=path_display)
 
 
     def display_pair() -> None:
@@ -2310,6 +2313,7 @@ def wmake_settings( tab: ttk.Frame ) -> None:
     chkbSaveMarkTxt  = tk_variables_register_and_init('SaveMarkTexts'     , 'bool')
     chkbSaveFileDB   = tk_variables_register_and_init('SaveFileDB'        , 'bool')
     chkbDelPreview   = tk_variables_register_and_init('DelPreviewOnClose' , 'bool')
+    path_display_depth = tk_variables_register_and_init('PathDisplayDepth', 'integer')
 
     slideWinZoom     = tk_variables_register_and_init('WinZoomFactor'     , 'double')
 
@@ -2368,6 +2372,12 @@ def wmake_settings( tab: ttk.Frame ) -> None:
 
     tk.Checkbutton(commonFrame, text="Store file database at program's end to continue on next start without new 'search' (click 'Restore list')",
         variable=chkbSaveFileDB ).pack(anchor="w", side='top', pady=(0,16) )
+
+    path_display_frame = tk.Frame(commonFrame)
+    path_display_frame.pack(anchor="w", side='top', pady=(0,16))
+    tk.Label(path_display_frame, text="Path display depth in sim-search:").pack(side='left', padx=(8,8))
+    tk.Spinbox(path_display_frame, from_=1, to=20, wrap=True, width=3,
+        textvariable=path_display_depth).pack(side='left')
 
     # Create Zoom-Slider for WINDOW SIZE - - - - - - - - - - - - - - - - - - - -
 
